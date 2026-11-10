@@ -7,7 +7,7 @@
 | M1 Skeleton | **Built.** `assembleDebug testDebugUnitTest` passes (33 tests). The AVD check is on hold (GPU memory is busy); see the checklist below. |
 | M2 Wall view | **Built.** `assembleDebug testDebugUnitTest` passes (90 tests). Not yet run on the AVD or tablet; see the M2 checklist below. |
 | M3 Routes | **Built.** `assembleDebug testDebugUnitTest` passes (131 tests). Not yet run on the AVD; see the M3 checklist below. |
-| M4 ESP32 firmware | Not started |
+| M4 ESP32 firmware | **Built.** `firmware/home_wall/home_wall.ino` compiles with `arduino-cli` for ESP32 Dev Module at default settings on core 3.3.12 (87% of program storage) and 2.0.17 (89%), with FastLED 3.10.9 and no warnings from the sketch. Not yet uploaded; see the M4 steps below. |
 | M5 LEDs in the app | Not started |
 | M6 Wall Setup mapping | Not started |
 | M7 Polish & safety | Not started |
@@ -82,6 +82,20 @@ M3 notes (consistent with the doc, listed so they are not a surprise):
 - Back from the editor with changes asks "Discard this route?" for a new route, and "Discard your
   changes?" when editing. Cancelling the Save dialog keeps what was typed for next time.
 
+M4 notes:
+- **Color order (deferred; you'll adjust it later).** The firmware uses `COLOR_ORDER RBG`, as §2 and §11.6 say.
+  Your test sketch `Documents/Arduino/sketch_jun18a` uses `RGB`. The nRF Connect route test below
+  shows which is right (LED 12 must be green). If it is RGB, change the `COLOR_ORDER` line in the sketch and §2/§11.6 together.
+- The `#include`s sit just above the settings block instead of below it. FastLED uses `DATA_PIN`
+  as a name inside its own headers, so defining it first breaks the build (FastLED's own examples
+  put their defines after the include too). The settings block itself is exactly as in §11.6.
+- The service UUID is in the advertising packet and the name in the scan response, set explicitly.
+  The BLE library's default puts both in one packet, which doesn't fit with a 128-bit UUID and
+  could drop the UUID the app scans for.
+- At boot the palette holds the §9.3 colors (before brightness), so a frame sent by hand without
+  a palette still shows something. The app always sends its own palette on connect.
+- Serial logging uses a 1 KB transmit buffer so logging from the Bluetooth callback never stalls a write.
+
 ## To do by hand
 
 - [x] ~~Update Android Studio to 2026.2.2 or newer.~~ Done; the project syncs.
@@ -89,6 +103,8 @@ M3 notes (consistent with the doc, listed so they are not a surprise):
 - [ ] Run the M2 checklist: the placeholder parts on the AVD, the real-photo parts on the tablet.
 - [ ] Decide on the M2 perspective-matrix deviation above.
 - [ ] Run the M3 checklist on the AVD.
+- [ ] Upload the firmware and run the M4 nRF Connect steps.
+- [ ] Check the strand's color order when convenient (see M4 notes).
 
 ## M1 manual test checklist (AVD)
 
@@ -151,3 +167,28 @@ Use the placeholder layout (no photo needed). Hold markers are on by default, so
 - [ ] Edit → ⋮ → **Delete route** asks first, then goes back to Route List, and the route is gone.
 - [ ] Force-stop and reopen: routes, sort and filter are all still there.
 - [ ] Settings → Show hold markers off: Route Display and the editor show only the plain wall and rings.
+
+## M4 firmware: upload and test with nRF Connect
+
+The sketch is `firmware/home_wall/home_wall.ino`. Upload it as its top comment says (esp32 board package, FastLED, ESP32 Dev Module, default settings).
+
+**On the ESP32**
+
+- [ ] Open Serial Monitor at 115200 baud and press the board's EN/RST button. You should see "Home Wall LED controller, protocol v1", then "Advertising as HomeWall (preferred MTU 517)". All LEDs are off.
+
+**With nRF Connect for Mobile on a phone or the tablet**
+
+To write a value: tap the up-arrow on the characteristic, choose **BYTE ARRAY**, and paste the hex without spaces. Request or Command both work.
+
+- [ ] **Scanner:** "HomeWall" appears. Tap **Connect**. The serial log says "Connected".
+- [ ] **MTU:** in nRF Connect's ⋮ menu, choose **Request MTU** and enter 517. The serial log says "MTU 517 (max packet 512 bytes)".
+- [ ] **INFO:** open the service `5B1E0001-…` and read characteristic `…0003` (down-arrow). It shows `0x01-26-02-10`: protocol 1, 550 LEDs, 16 palette slots.
+- [ ] **Palette (vector 1):** write `01000100FF00020000FF039600FF04FFFFFF` to `…0002`. The log says "SET_PALETTE seq=0 slots=4" and the wall doesn't change.
+- [ ] **Route frame (vector 2):** write `0207030C00012800022900022C01029F0103`. The log says "FRAME seq=7 flags=03 entries=5". The wall shows LED 12 **green**, LEDs 40, 41 and 300 **blue**, and LED 415 **purple**. (LED 40 is on your test sketch's hidden list, so it may be behind the wall.)
+  - **Color order check:** if LED 12 is blue and 41/300 are green, the strand isn't RBG. Tell me, and I'll change `COLOR_ORDER` in both the sketch and the doc.
+- [ ] **Live palette:** write `010901FF0000` (slot 1 → red). LED 12 turns red straight away with no new frame, because a palette change re-renders the current frame.
+- [ ] **All off (vector 3):** write `020803`. Every LED goes off.
+- [ ] **Multi-packet frame:** write `020A01640004` (BEGIN, LED 100 white). Nothing changes yet, because it isn't committed. Then write `020B02650004` (COMMIT, LED 101 white). LEDs 100 and 101 light white together.
+- [ ] **Bad input is ignored:** write `0300`. The log says "unknown opcode 03" and the wall doesn't change.
+- [ ] **Disconnect:** with something lit, tap **Disconnect** in nRF Connect. The LEDs stay lit, and the log says "Disconnected", then "Advertising again". "HomeWall" shows up in the scanner again, and reconnecting works.
+- [ ] **Power cycle:** unplug and replug the ESP32. It boots with every LED off and advertises again.
