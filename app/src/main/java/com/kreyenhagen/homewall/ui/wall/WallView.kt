@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
@@ -52,7 +53,8 @@ import kotlin.math.roundToInt
  * The wall with its overlays (§7.2–§7.5), shared by Route Display, Route Editor and Wall Setup.
  *
  * Shows the straightened [image] (or a plain wall-colored rectangle without one), debug markers,
- * and a ring around each hold in [rings]. With [zoomEnabled]: pinch to zoom 1×–5×, two-finger pan,
+ * a ring around each hold in [rings], and the LED preview dots. With [zoomEnabled]: pinch to zoom
+ * 1×–5×, two-finger pan,
  * and double-tap to reset; a single tap still selects.
  */
 @Composable
@@ -63,6 +65,8 @@ fun WallView(
     rings: Map<Int, Color> = emptyMap(),
     ringSizeIn: Float = 3.5f,
     showMarkers: Boolean = false,
+    /** holdId → color: the debug LED preview (§7.3), from the last frame actually sent. */
+    ledPreview: Map<Int, Color> = emptyMap(),
     showLabels: Boolean = true,
     zoomEnabled: Boolean = false,
     onTapHold: ((holdId: Int) -> Unit)? = null,
@@ -160,6 +164,7 @@ fun WallView(
         if (image == null || showMarkers) drawFolds(layout, t, strong = showMarkers)
         if (showMarkers) drawMarkers(layout.holds, labels, t)
         drawRings(rings, holdsById, ringSizeIn, t)
+        drawLedPreview(ledPreview, holdsById, t)
     }
 }
 
@@ -191,6 +196,8 @@ private val MIN_HIT_RADIUS = 24.dp
 private val MIN_RING_RADIUS = 12.dp
 private val RING_STROKE = 3.dp
 private val MARKER_SIZE = 22.dp
+private val LED_GLOW_RADIUS = 9.dp
+private val LED_CORE_RADIUS = 3.dp
 private val LABEL_STYLE = TextStyle(color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
 
 private fun DrawScope.drawFolds(layout: WallLayout, t: WallTransform, strong: Boolean) {
@@ -237,6 +244,28 @@ private fun DrawScope.drawRings(rings: Map<Int, Color>, holdsById: Map<Int, Hold
     }
 }
 
+
+/** Small glowing dots, one per hold whose LEDs are lit (§7.3). Sits inside the ring, so both show. */
+private fun DrawScope.drawLedPreview(dots: Map<Int, Color>, holdsById: Map<Int, Hold>, t: WallTransform) {
+    if (dots.isEmpty()) return
+    val glow = LED_GLOW_RADIUS.toPx()
+    val core = LED_CORE_RADIUS.toPx()
+    for ((holdId, color) in dots) {
+        val hold = holdsById[holdId] ?: continue
+        val center = t.wallToScreen(hold.x, hold.y)
+        drawCircle(
+            Brush.radialGradient(listOf(color.copy(alpha = 0.85f), color.copy(alpha = 0.35f), Color.Transparent), center, glow),
+            glow,
+            center,
+        )
+        drawCircle(Color.Black.copy(alpha = 0.6f), core + 1.dp.toPx(), center)
+        drawCircle(lerpToWhite(color), core, center)
+    }
+}
+
+/** A lit LED's center looks almost white. */
+private fun lerpToWhite(color: Color): Color =
+    Color(red = 0.5f + color.red / 2f, green = 0.5f + color.green / 2f, blue = 0.5f + color.blue / 2f)
 @TabletPreviews
 @Composable
 private fun WallViewPreview() {
@@ -247,6 +276,7 @@ private fun WallViewPreview() {
             image = null,
             showMarkers = true,
             rings = mapOf(5 to HoldRole.START.ringColor, 60 to HoldRole.MIDDLE.ringColor, 61 to HoldRole.MIDDLE.ringColor, 148 to HoldRole.FINISH.ringColor),
+            ledPreview = mapOf(5 to HoldRole.START.ringColor, 60 to HoldRole.MIDDLE.ringColor, 61 to HoldRole.MIDDLE.ringColor, 148 to HoldRole.FINISH.ringColor),
         )
     }
 }

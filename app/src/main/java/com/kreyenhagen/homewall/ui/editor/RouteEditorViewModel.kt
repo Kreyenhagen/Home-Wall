@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kreyenhagen.homewall.data.layout.LayoutState
 import com.kreyenhagen.homewall.data.layout.WallLayout
+import com.kreyenhagen.homewall.data.layout.layoutOrNull
 import com.kreyenhagen.homewall.data.photo.WallPhotoState
 import com.kreyenhagen.homewall.data.route.RouteRepository
 import com.kreyenhagen.homewall.data.settings.AppSettings
@@ -15,23 +16,23 @@ import com.kreyenhagen.homewall.domain.EditorRules
 import com.kreyenhagen.homewall.domain.HoldRole
 import com.kreyenhagen.homewall.domain.Route
 import com.kreyenhagen.homewall.domain.RouteNames
+import com.kreyenhagen.homewall.led.LedFrame
+import com.kreyenhagen.homewall.led.RouteFrames
 import com.kreyenhagen.homewall.led.ringColor
+import com.kreyenhagen.homewall.ui.components.UserMessage
 import com.kreyenhagen.homewall.ui.routedisplay.RouteDisplayViewModel
+import com.kreyenhagen.homewall.ui.wall.LedPreview
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicLong
-
-/** A snackbar message. Each one has its own id, so the same text twice still shows twice. */
-data class UserMessage(val text: String, val haptic: Boolean = false, val id: Long = nextMessageId.incrementAndGet())
-
-private val nextMessageId = AtomicLong()
 
 enum class EditorConfirm { DISCARD, DELETE }
 
@@ -57,6 +58,10 @@ data class RouteEditorUiState(
     val image: ImageBitmap? = null,
     val ringSizeIn: Float = AppSettings().ringSizeIn,
     val showMarkers: Boolean = AppSettings().showHoldMarkers,
+    /** The draft on the wall (§8.3); null until the route and layout have loaded. */
+    val ledFrame: LedFrame? = null,
+    /** holdId → dot color, when Show LED preview is on. */
+    val ledPreview: Map<Int, Color> = emptyMap(),
     /** The draft: holdId → role. */
     val holds: Map<Int, HoldRole> = emptyMap(),
     val rings: Map<Int, Color> = emptyMap(),
@@ -101,6 +106,10 @@ class RouteEditorViewModel(
     layout: Flow<LayoutState>,
     photo: Flow<WallPhotoState>,
     settings: Flow<AppSettings>,
+    /** The last frame actually sent to the controller (LedSync.lastSent). */
+    sentFrame: Flow<LedFrame?> = flowOf(null),
+    /** Deleting a route turns the LEDs off (§8.4). */
+    private val lightsOff: () -> Unit = {},
 ) : ViewModel() {
 
     private data class Local(
@@ -123,20 +132,27 @@ class RouteEditorViewModel(
 
     private val local = MutableStateFlow(Local())
 
+    private val ledPreview: Flow<Map<Int, Color>> = combine(sentFrame, settings, layout) { frame, s, layoutState ->
+        if (s.showLedPreview) LedPreview.dots(frame, layoutState.layoutOrNull) else emptyMap()
+    }.distinctUntilChanged()
+
     val uiState: StateFlow<RouteEditorUiState> =
         combine(local, layout, photo, settings) { l, layoutState, photoState, s ->
             val holds = l.history.present
+            val readyLayout = (layoutState as? LayoutState.Ready)?.layout
             RouteEditorUiState(
                 isNew = routeId == null,
                 loaded = l.loaded,
                 notFound = l.notFound,
-                layout = (layoutState as? LayoutState.Ready)?.layout,
+                layout = readyLayout,
                 layoutProblems = (layoutState as? LayoutState.Invalid)?.problems.orEmpty(),
                 image = photoState.rectified,
                 ringSizeIn = s.ringSizeIn,
                 showMarkers = s.showHoldMarkers,
                 holds = holds,
                 rings = holds.mapValues { it.value.ringColor },
+                // Every change, undo and redo included, goes straight to the wall (§8.3).
+                ledFrame = if (l.loaded && !l.notFound && readyLayout != null) RouteFrames.forDraft(holds, readyLayout) else null,
                 selectedRole = l.selectedRole,
                 canUndo = l.history.canUndo,
                 canRedo = l.history.canRedo,
@@ -149,7 +165,8 @@ class RouteEditorViewModel(
                 message = l.message,
                 exit = l.exit,
             )
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RouteEditorUiState(isNew = routeId == null))
+        }.combine(ledPreview) { state, preview -> state.copy(ledPreview = preview) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RouteEditorUiState(isNew = routeId == null))
 
     init {
         viewModelScope.launch {
@@ -266,6 +283,7 @@ class RouteEditorViewModel(
                 viewModelScope.launch {
                     try {
                         routes.delete(id)
+                        lightsOff()
                         local.update { it.copy(exit = EditorExit.Deleted) }
                     } catch (e: SQLException) {
                         local.update { it.copy(message = UserMessage("Couldn't delete the route: ${e.message}")) }

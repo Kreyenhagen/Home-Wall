@@ -25,6 +25,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kreyenhagen.homewall.ui.appViewModel
+import com.kreyenhagen.homewall.ui.components.DriveLeds
+import com.kreyenhagen.homewall.ui.components.WallLeds
 import com.kreyenhagen.homewall.ui.components.BackButton
 import com.kreyenhagen.homewall.ui.components.StubBody
 import java.io.File
@@ -33,6 +35,8 @@ import java.io.File
 fun WallSetupScreen(onBack: () -> Unit) {
     val vm = appViewModel { WallSetupViewModel(it.layoutRepository, it.wallPhotoRepository, it.settingsRepository) }
     val state by vm.uiState.collectAsStateWithLifecycle()
+    // Map LEDs and Review light their own LEDs in M6; until then the last route stays lit (§9.2).
+    DriveLeds(WallLeds.LastRoute)
     val context = LocalContext.current
 
     val choosePhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->

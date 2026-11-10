@@ -8,7 +8,7 @@
 | M2 Wall view | **Built.** `assembleDebug testDebugUnitTest` passes (90 tests). Not yet run on the AVD or tablet; see the M2 checklist below. |
 | M3 Routes | **Built.** `assembleDebug testDebugUnitTest` passes (131 tests). Not yet run on the AVD; see the M3 checklist below. |
 | M4 ESP32 firmware | **Built.** `firmware/home_wall/home_wall.ino` compiles with `arduino-cli` for ESP32 Dev Module at default settings on core 3.3.12 (87% of program storage) and 2.0.17 (89%), with FastLED 3.10.9 and no warnings from the sketch. Not yet uploaded; see the M4 steps below. |
-| M5 LEDs in the app | Not started |
+| M5 LEDs in the app | **Built.** `assembleDebug testDebugUnitTest` passes (165 tests). Not yet run on the AVD or with the ESP32; see the M5 checklist below. |
 | M6 Wall Setup mapping | Not started |
 | M7 Polish & safety | Not started |
 
@@ -96,6 +96,43 @@ M4 notes:
   a palette still shows something. The app always sends its own palette on connect.
 - Serial logging uses a 1 KB transmit buffer so logging from the Bluetooth callback never stalls a write.
 
+M5 notes (consistent with the doc unless marked, listed so they are not a surprise):
+- **Connecting at launch (my reading of §10.4; tell me if you'd rather not).** With a saved board
+  and Simulated off, the app connects to it on launch, and again when Simulated is turned off. §10.4
+  asks for a reconnect when the app comes back to the foreground; Android often ends a backgrounded
+  app's process, and coming back then is a fresh launch, so connecting at launch is how that case
+  reconnects. Drops while the app is running are retried by the controller itself.
+- Auto-reconnect (1 s, 2 s, 4 s, then every 10 s) starts after a connection I didn't end drops.
+  A first connect that fails (board off, out of range) stops with an error snackbar and Retry
+  instead of retrying forever. Inside one attempt, an immediate GATT error such as status 133 is
+  retried up to three times, half a second apart.
+- A write that fails is treated as a dropped connection: the app closes it, reconnects, and
+  LedSync resends the current frame on the new session.
+- In the background the retry loop waits; it tries again as soon as the app is back in front.
+  Foreground tracking uses `ActivityLifecycleCallbacks`, so no new library.
+- `connectGatt(context, false, callback, TRANSPORT_LE)` (§10.3) is deprecated in SDK 37 in favor of
+  an overload that only exists on Android 17, so it's kept with a suppressed warning until minSdk
+  reaches 37. Everything else uses the API-33 calls §10 names.
+- If the MTU request is refused, it's tried once more after 200 ms, then the default MTU is used
+  (the encoder chunks for it; it's only slower).
+- The GATT UUIDs and INFO parsing live next to the encoder in `led/LedProtocol.kt`, so the whole
+  §11 contract is in one file. The protocol itself is unchanged (still v1).
+- The Simulated setting switches between the simulated and Bluetooth controllers live
+  (`led/ActiveLedController.kt`). Switching always counts as a new session, so the current frame is
+  resent to whichever one is now active.
+- Brightness is sent when the slider is released (the setting is saved then). The firmware
+  re-renders straight away.
+- §10.3 step 5's LED-count warning is a banner on Route List, e.g. "The controller has 550 LEDs but
+  the wall layout has 154." Expect it with the placeholder layout until the wall is mapped (M6).
+- The connected menu also opens while connecting, so a stuck connection can be cancelled with
+  Disconnect. Forget device (menu or Settings) disconnects too.
+- If the Nearby devices permission is denied, the snackbar has a Settings button that opens the
+  app's system settings page.
+- Wall Setup keeps the last route lit for now; its own LED content (the current LED, an identified
+  hold, all holds) is M6. The LED preview is drawn on Route Display and in the editor; Wall Setup
+  gets it with mapping in M6.
+- `UserMessage` moved from the editor to `ui/components`, since the Connect button uses it too.
+
 ## To do by hand
 
 - [x] ~~Update Android Studio to 2026.2.2 or newer.~~ Done; the project syncs.
@@ -105,6 +142,8 @@ M4 notes:
 - [ ] Run the M3 checklist on the AVD.
 - [ ] Upload the firmware and run the M4 nRF Connect steps.
 - [ ] Check the strand's color order when convenient (see M4 notes).
+- [ ] Run the M5 checklist: Simulated on the AVD, Bluetooth on the tablet with the ESP32.
+- [ ] Say whether connecting to the saved board at launch is what you want (see M5 notes).
 
 ## M1 manual test checklist (AVD)
 
@@ -192,3 +231,34 @@ To write a value: tap the up-arrow on the characteristic, choose **BYTE ARRAY**,
 - [ ] **Bad input is ignored:** write `0300`. The log says "unknown opcode 03" and the wall doesn't change.
 - [ ] **Disconnect:** with something lit, tap **Disconnect** in nRF Connect. The LEDs stay lit, and the log says "Disconnected", then "Advertising again". "HomeWall" shows up in the scanner again, and reconnecting works.
 - [ ] **Power cycle:** unplug and replug the ESP32. It boots with every LED off and advertises again.
+
+## M5 manual test checklist
+
+**On the AVD (Simulated):** Settings → turn on **Simulated LED controller**. **Show LED preview** is on by default in debug builds. Have a few routes from M3.
+
+- [ ] Open a route: a small glowing dot sits in the middle of every ring, in the ring's color. Settings → Diagnostics shows a `TX 02 .. 03 …` frame with one 3-byte entry per LED.
+- [ ] Swipe quickly through several routes: the dots follow, and once you stop they match the rings of the route on screen. Diagnostics shows fewer frames than routes swiped past (stale ones are dropped), and the last one is the route you stopped on.
+- [ ] Turn Show LED preview off: the dots go; the rings stay.
+- [ ] **Edit** a route: dots match the draft. Tap a hold on and off, Undo, Redo: the dots follow every step. **Create** a new route: no dots (the wall goes dark), and Diagnostics shows `TX 02 .. 03` with no entries.
+- [ ] Back on Route List, Settings and Wall Setup: no new frame is sent (the last route stays lit). Open the route again: still no new frame, since it's already showing.
+- [ ] **Lights off** (power icon on Route List) sends `TX 02 .. 03` (all off). Opening any route lights it again.
+- [ ] Edit → ⋮ → Delete route: back on Route List, and an all-off frame was sent.
+- [ ] Settings → Brightness: move the slider and let go. A palette packet `TX 01 …` is sent with the new values (at 100%: `… 01 00 FF 00 02 00 00 FF 03 96 00 FF 04 FF FF FF 05 40 40 40`).
+- [ ] Turn Simulated off and on again: "Simulated controller disconnected", then "connected", the palette, and the current frame are logged again.
+- [ ] Rotate on Route Display and in the editor: no frame is resent unless the content changed.
+
+**On the tablet with the ESP32** (firmware from M4 uploaded; Simulated **off**):
+
+Note: with the placeholder layout, hold *n* is LED *n*, so the LEDs that light are the right indices but not at the positions on screen. The Route List banner about 550 vs 154 LEDs is expected until mapping (M6).
+
+- [ ] Tap the grey Bluetooth icon: a short explanation, then Android asks to allow **Nearby devices**. If Bluetooth is off, Android asks to turn it on.
+- [ ] The picker scans (progress bar) and lists **HomeWall** with its signal strength. Rescan works after the 10 s scan ends.
+- [ ] Tap HomeWall: the icon goes amber, then green. Diagnostics shows `INFO 01 26 02 10`, "Connected to HomeWall (MTU 517)" and the palette `TX`. Settings → Saved device shows HomeWall.
+- [ ] Open a route: the wall lights it. Swipe through routes fast: the wall keeps up with no visible lag and ends on the route on screen.
+- [ ] In the editor the wall follows every tap, Undo and Redo. Lights off clears the wall.
+- [ ] Brightness slider: the wall gets brighter or dimmer when you let go.
+- [ ] **Power-cycle the ESP32** while a route is shown: the icon goes amber, and within about 10 s it's green again and the route is back on the wall.
+- [ ] Press Home, power-cycle the ESP32, then reopen the app: it reconnects and relights the route.
+- [ ] Force-stop the app and reopen it: it connects to HomeWall by itself (see M5 notes).
+- [ ] Tap the green icon: a menu with "HomeWall · 550 LEDs", **Disconnect** and **Forget device**. Disconnect: the icon goes grey and the wall stays lit (firmware keeps the last frame); it doesn't reconnect on its own. Tap the icon: it connects again. Forget device: the next tap opens the picker.
+- [ ] With the board unplugged, tap Connect: after about 10 s a snackbar says it couldn't connect, with **Retry**.

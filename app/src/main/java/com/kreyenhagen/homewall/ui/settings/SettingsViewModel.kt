@@ -28,6 +28,8 @@ class SettingsViewModel(
     private val repo: SettingsRepository,
     controller: LedController,
     logBuffer: LogBuffer,
+    /** Forgetting the board also disconnects from it (§8.1). */
+    private val disconnect: () -> Unit = {},
 ) : ViewModel() {
 
     /** Null until settings have loaded, so controls don't flash their defaults. */
@@ -44,8 +46,12 @@ class SettingsViewModel(
     fun setShowLedPreview(show: Boolean) = launch { repo.setShowLedPreview(show) }
     fun setKeepScreenOn(on: Boolean) = launch { repo.setKeepScreenOn(on) }
     fun setSimulatedLeds(on: Boolean) = launch { repo.setSimulatedLeds(on) }
-    fun forgetDevice() = launch { repo.setSavedDevice(null) }
+    fun forgetDevice() {
+        disconnect()
+        launch { repo.setSavedDevice(null) }
+    }
 
+    /** LedSync resends the palette as soon as the new value is stored (§9.3). */
     fun setBrightness(percent: Float) = launch { repo.setLedBrightness(percent.roundToInt()) }
 
     fun setRingSize(inches: Float) = launch {

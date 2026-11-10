@@ -12,6 +12,9 @@ import com.kreyenhagen.homewall.domain.HoldRole.FINISH
 import com.kreyenhagen.homewall.domain.HoldRole.MIDDLE
 import com.kreyenhagen.homewall.domain.HoldRole.START
 import com.kreyenhagen.homewall.domain.RouteHold
+import com.kreyenhagen.homewall.led.LedEntry
+import com.kreyenhagen.homewall.led.LedFrame
+import com.kreyenhagen.homewall.led.Palette
 import com.kreyenhagen.homewall.led.ringColor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -33,10 +36,14 @@ class RouteEditorViewModelTest {
     private var now = 1_000L
     private val repo = RouteRepository(dao, clock = { now })
     private val layout = MutableStateFlow<LayoutState>(LayoutState.Ready(PlaceholderLayout.create()))
+    private var lightsOffCalls = 0
 
     /** A ViewModel whose state is being collected, as the screen would. */
     private fun TestScope.editor(routeId: Long? = null): RouteEditorViewModel {
-        val vm = RouteEditorViewModel(routeId, repo, layout, MutableStateFlow(WallPhotoState(loaded = true)), MutableStateFlow(AppSettings()))
+        val vm = RouteEditorViewModel(
+            routeId, repo, layout, MutableStateFlow(WallPhotoState(loaded = true)), MutableStateFlow(AppSettings()),
+            lightsOff = { lightsOffCalls++ },
+        )
         backgroundScope.launch(main.dispatcher) { vm.uiState.collect {} }
         return vm
     }
@@ -200,6 +207,27 @@ class RouteEditorViewModelTest {
         assertEquals(EditorExit.Closed, undone.state.exit)
     }
 
+
+    @Test
+    fun theDraftGoesToTheWallIncludingUndoAndRedo() = runTest {
+        val vm = editor()
+        assertEquals(LedFrame.OFF, vm.state.ledFrame) // a new route starts dark (§8.3)
+        vm.tap(START, 5)
+        vm.tap(FINISH, 148)
+        assertEquals(LedFrame(listOf(LedEntry(5, Palette.SLOT_START), LedEntry(148, Palette.SLOT_FINISH))), vm.state.ledFrame)
+        vm.undo()
+        assertEquals(LedFrame(listOf(LedEntry(5, Palette.SLOT_START))), vm.state.ledFrame)
+        vm.redo()
+        assertEquals(LedFrame(listOf(LedEntry(5, Palette.SLOT_START), LedEntry(148, Palette.SLOT_FINISH))), vm.state.ledFrame)
+    }
+
+    @Test
+    fun editingShowsNothingUntilTheRouteHasLoaded() = runTest {
+        val id = repo.create("Loaded", 3, listOf(RouteHold(7, MIDDLE)))
+        val vm = editor(id)
+        assertEquals(LedFrame(listOf(LedEntry(7, Palette.SLOT_MIDDLE))), vm.state.ledFrame)
+        assertNull(editor(999).state.ledFrame) // deleted meanwhile: leave the wall alone
+    }
     @Test
     fun deleteAsksThenDeletes() = runTest {
         val id = repo.create("Doomed", null, listOf(RouteHold(1, MIDDLE)))
@@ -210,6 +238,7 @@ class RouteEditorViewModelTest {
         vm.confirm()
         assertEquals(EditorExit.Deleted, vm.state.exit)
         assertNull(repo.get(id))
+        assertEquals(1, lightsOffCalls) // §8.4: deleting turns the LEDs off
     }
 
     @Test

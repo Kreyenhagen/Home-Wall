@@ -59,3 +59,12 @@ val HoldRole.ringColor: Color
 /** The LED color before brightness. */
 val HoldRole.ledColor: Rgb
     get() = Palette.defaults.getValue(slot)
+
+/** The color of a slot's dot in the on-screen LED preview (§7.3): the ring color for roles. */
+fun previewColor(slot: Int): Color = when (slot) {
+    Palette.SLOT_START -> HoldRole.START.ringColor
+    Palette.SLOT_MIDDLE -> HoldRole.MIDDLE.ringColor
+    Palette.SLOT_FINISH -> HoldRole.FINISH.ringColor
+    Palette.SLOT_ALL_HOLDS -> Color(0xFF9E9E9E)
+    else -> Color.White
+}

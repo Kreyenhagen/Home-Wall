@@ -28,6 +28,8 @@ data class RouteListUiState(
     val connection: ConnectionState = ConnectionState.Disconnected,
     /** Shown above the list: the placeholder-layout note (§6.4) or a layout error. */
     val banner: String? = null,
+    /** The controller and the layout disagree on the LED count (§10.3 step 5). */
+    val ledCountWarning: String? = null,
 )
 
 class RouteListViewModel(
@@ -37,6 +39,7 @@ class RouteListViewModel(
     connection: Flow<ConnectionState>,
     private val setSort: suspend (RouteSort) -> Unit,
     private val setFilter: suspend (GradeFilter) -> Unit,
+    private val onLightsOff: () -> Unit = {},
 ) : ViewModel() {
 
     val uiState: StateFlow<RouteListUiState> =
@@ -49,6 +52,7 @@ class RouteListViewModel(
                 filter = s.gradeFilter,
                 connection = conn,
                 banner = bannerFor(layoutState),
+                ledCountWarning = ledCountWarning(conn, layoutState.layoutOrNull?.ledCount),
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RouteListUiState())
 
@@ -67,4 +71,16 @@ class RouteListViewModel(
     }
 
     fun resetFilter() = selectFilter(GradeFilter())
+
+    /** Lights off (§8.1): clears the wall and the remembered route. */
+    fun lightsOff() = onLightsOff()
+
+    companion object {
+        fun ledCountWarning(connection: ConnectionState, layoutLedCount: Int?): String? {
+            val connected = connection as? ConnectionState.Connected ?: return null
+            if (layoutLedCount == null || connected.ledCount == layoutLedCount) return null
+            return "The controller has ${connected.ledCount} LEDs but the wall layout has $layoutLedCount. " +
+                "LEDs past the shorter count won't light."
+        }
+    }
 }

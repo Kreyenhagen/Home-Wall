@@ -1,5 +1,7 @@
 package com.kreyenhagen.homewall.led
 
+import java.util.UUID
+
 /**
  * Encoder for LED protocol v1 (§11), the contract with `firmware/home_wall/home_wall.ino`.
  * Never change one side without the other.
@@ -9,6 +11,11 @@ package com.kreyenhagen.homewall.led
  */
 object LedProtocol {
     const val VERSION = 1
+
+    // GATT (§11.1)
+    val SERVICE_UUID: UUID = UUID.fromString("5b1e0001-7c2f-4a8e-9d3b-2f6a1c4e8b70")
+    val LED_CTRL_UUID: UUID = UUID.fromString("5b1e0002-7c2f-4a8e-9d3b-2f6a1c4e8b70")
+    val INFO_UUID: UUID = UUID.fromString("5b1e0003-7c2f-4a8e-9d3b-2f6a1c4e8b70")
 
     const val OP_SET_PALETTE = 0x01
     const val OP_FRAME = 0x02
@@ -91,5 +98,15 @@ object LedProtocol {
         }
     }
 
+    /** INFO (§11.2): version, ledCount (uint16 LE), palette slots, then optional extras. Null if too short. */
+    fun parseInfo(bytes: ByteArray): ControllerInfo? {
+        if (bytes.size < 4) return null
+        fun u8(i: Int) = bytes[i].toInt() and 0xFF
+        return ControllerInfo(protocolVersion = u8(0), ledCount = u8(1) or (u8(2) shl 8), paletteSlots = u8(3))
+    }
+
     private fun seqAt(firstSeq: Int, offset: Int): Byte = ((firstSeq + offset) and 0xFF).toByte()
 }
+
+/** What the controller reports in INFO (§11.2). */
+data class ControllerInfo(val protocolVersion: Int, val ledCount: Int, val paletteSlots: Int)

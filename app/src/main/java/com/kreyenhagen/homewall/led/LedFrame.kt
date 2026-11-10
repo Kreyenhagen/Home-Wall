@@ -7,5 +7,8 @@ data class LedEntry(val index: Int, val slot: Int)
 data class LedFrame(val entries: List<LedEntry>) {
     companion object {
         val OFF = LedFrame(emptyList())
+
+        /** A frame from entries in any order. If an LED appears twice, the first entry wins. */
+        fun of(entries: Iterable<LedEntry>): LedFrame = LedFrame(entries.distinctBy { it.index }.sortedBy { it.index })
     }
 }

@@ -36,6 +36,8 @@ import com.kreyenhagen.homewall.R
 import com.kreyenhagen.homewall.data.settings.AppSettings
 import com.kreyenhagen.homewall.data.settings.SavedDevice
 import com.kreyenhagen.homewall.ui.appViewModel
+import com.kreyenhagen.homewall.ui.components.DriveLeds
+import com.kreyenhagen.homewall.ui.components.WallLeds
 import com.kreyenhagen.homewall.ui.components.BackButton
 import com.kreyenhagen.homewall.ui.components.TabletPreviews
 import com.kreyenhagen.homewall.ui.theme.HomeWallTheme
@@ -44,8 +46,9 @@ import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit, onOpenWallSetup: () -> Unit) {
-    val vm = appViewModel { SettingsViewModel(it.settingsRepository, it.ledController, it.logBuffer) }
+    val vm = appViewModel { SettingsViewModel(it.settingsRepository, it.ledController, it.logBuffer, it.bleLedController::disconnect) }
     val state by vm.uiState.collectAsStateWithLifecycle()
+    DriveLeds(WallLeds.LastRoute)
 
     SettingsContent(
         state = state,

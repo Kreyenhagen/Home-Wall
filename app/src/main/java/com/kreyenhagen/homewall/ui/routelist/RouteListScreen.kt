@@ -41,7 +41,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -58,10 +57,12 @@ import com.kreyenhagen.homewall.domain.RouteSort
 import com.kreyenhagen.homewall.led.ConnectionState
 import com.kreyenhagen.homewall.ui.appViewModel
 import com.kreyenhagen.homewall.ui.components.ConnectButton
+import com.kreyenhagen.homewall.ui.components.ConnectControl
+import com.kreyenhagen.homewall.ui.components.DriveLeds
+import com.kreyenhagen.homewall.ui.components.WallLeds
 import com.kreyenhagen.homewall.ui.components.GradeChip
 import com.kreyenhagen.homewall.ui.components.TabletPreviews
 import com.kreyenhagen.homewall.ui.theme.HomeWallTheme
-import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @Composable
@@ -74,24 +75,18 @@ fun RouteListScreen(onOpenRoute: (routeId: Long) -> Unit, onCreateRoute: () -> U
             connection = it.ledController.state,
             setSort = it.settingsRepository::setSort,
             setFilter = it.settingsRepository::setGradeFilter,
+            onLightsOff = it.ledSync::lightsOff,
         )
     }
     val state by vm.uiState.collectAsStateWithLifecycle()
+    DriveLeds(WallLeds.LastRoute)
     val snackbar = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
 
     RouteListContent(
         state = state,
         snackbarHostState = snackbar,
-        // Bluetooth arrives in M5. Until then, say how to get LED output on the emulator.
-        onConnectClick = {
-            val message = if (state.connection == ConnectionState.Simulated) {
-                "Using the simulated LED controller. Turn it off in Settings."
-            } else {
-                "Bluetooth arrives in M5. To test without the wall, turn on Settings → Simulated LED controller."
-            }
-            scope.launch { snackbar.showSnackbar(message) }
-        },
+        connectControl = { ConnectControl(snackbar) },
+        onLightsOff = vm::lightsOff,
         onSortSelected = vm::selectSort,
         onFilterChange = vm::selectFilter,
         onResetFilter = vm::resetFilter,
@@ -106,7 +101,8 @@ fun RouteListScreen(onOpenRoute: (routeId: Long) -> Unit, onCreateRoute: () -> U
 fun RouteListContent(
     state: RouteListUiState,
     snackbarHostState: SnackbarHostState,
-    onConnectClick: () -> Unit,
+    connectControl: @Composable () -> Unit,
+    onLightsOff: () -> Unit,
     onSortSelected: (RouteSort) -> Unit,
     onFilterChange: (GradeFilter) -> Unit,
     onResetFilter: () -> Unit,
@@ -121,9 +117,8 @@ fun RouteListContent(
             TopAppBar(
                 title = { Text("Home Wall") },
                 actions = {
-                    ConnectButton(state.connection, onClick = onConnectClick)
-                    // Lights off needs LedSync (M5).
-                    IconButton(onClick = {}, enabled = false) {
+                    connectControl()
+                    IconButton(onClick = onLightsOff) {
                         Icon(painterResource(R.drawable.ic_power), contentDescription = "Lights off")
                     }
                     SortMenu(selected = state.sort, onSelect = onSortSelected)
@@ -147,6 +142,7 @@ fun RouteListContent(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             state.banner?.let { Banner(it) }
+            state.ledCountWarning?.let { Banner(it) }
             if (state.filter.isActive) {
                 FilterChip(
                     selected = true,
@@ -329,7 +325,8 @@ private fun RouteListPreview() {
                 banner = "Placeholder layout. Map your wall in Settings → Wall Setup.",
             ),
             snackbarHostState = remember { SnackbarHostState() },
-            onConnectClick = {},
+            connectControl = { ConnectButton(ConnectionState.Simulated, onClick = {}) },
+            onLightsOff = {},
             onSortSelected = {},
             onFilterChange = {},
             onResetFilter = {},
@@ -347,7 +344,8 @@ private fun RouteListFilteredOutPreview() {
         RouteListContent(
             state = RouteListUiState(loaded = true, totalRoutes = 3, filter = GradeFilter(includeProjects = false, minGrade = 12)),
             snackbarHostState = remember { SnackbarHostState() },
-            onConnectClick = {},
+            connectControl = { ConnectButton(ConnectionState.Simulated, onClick = {}) },
+            onLightsOff = {},
             onSortSelected = {},
             onFilterChange = {},
             onResetFilter = {},

@@ -10,6 +10,9 @@ import com.kreyenhagen.homewall.domain.HoldRole
 import com.kreyenhagen.homewall.domain.Route
 import com.kreyenhagen.homewall.domain.RouteHold
 import com.kreyenhagen.homewall.domain.RouteSort
+import com.kreyenhagen.homewall.led.LedEntry
+import com.kreyenhagen.homewall.led.LedFrame
+import com.kreyenhagen.homewall.led.Palette
 import com.kreyenhagen.homewall.led.ringColor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
@@ -31,6 +34,7 @@ class RouteDisplayViewModelTest {
 
     private val routes = MutableStateFlow(listOf(route(1, 2), route(2, null), route(3, 5), route(4, 8)))
     private val settings = MutableStateFlow(AppSettings(sort = RouteSort.NEWEST, gradeFilter = GradeFilter(includeProjects = false)))
+    private val sentFrame = MutableStateFlow<LedFrame?>(null)
 
     private fun TestScope.display(openedId: Long): RouteDisplayViewModel {
         val vm = RouteDisplayViewModel(
@@ -39,6 +43,7 @@ class RouteDisplayViewModelTest {
             settings,
             MutableStateFlow(LayoutState.Ready(PlaceholderLayout.create())),
             MutableStateFlow(WallPhotoState(loaded = true)),
+            sentFrame,
         )
         backgroundScope.launch(main.dispatcher) { vm.uiState.collect {} }
         return vm
@@ -98,6 +103,25 @@ class RouteDisplayViewModelTest {
         assertNull(vm.current)
     }
 
+
+    @Test
+    fun theWallFollowsTheCurrentPage() = runTest {
+        val vm = display(openedId = 3)
+        assertEquals(LedFrame(listOf(LedEntry(3, Palette.SLOT_MIDDLE))), vm.uiState.value.ledFrame)
+        vm.onPageChanged(4, 0) // swiped halfway to the previous page
+        assertEquals(LedFrame(listOf(LedEntry(4, Palette.SLOT_MIDDLE))), vm.uiState.value.ledFrame)
+    }
+
+    @Test
+    fun theLedPreviewShowsTheLastSentFrameWhenTurnedOn() = runTest {
+        settings.update { it.copy(showLedPreview = true) }
+        val vm = display(openedId = 3)
+        assertEquals(emptyMap<Int, Any>(), vm.uiState.value.ledPreview)
+        sentFrame.value = LedFrame(listOf(LedEntry(3, Palette.SLOT_MIDDLE)))
+        assertEquals(mapOf(3 to HoldRole.MIDDLE.ringColor), vm.uiState.value.ledPreview)
+        settings.update { it.copy(showLedPreview = false) }
+        assertEquals(emptyMap<Int, Any>(), vm.uiState.value.ledPreview)
+    }
     @Test
     fun ringsAndTheMissingHoldsNote() {
         val route = Route(

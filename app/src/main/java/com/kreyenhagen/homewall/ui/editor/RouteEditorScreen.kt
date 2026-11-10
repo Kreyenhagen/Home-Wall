@@ -70,6 +70,8 @@ import com.kreyenhagen.homewall.domain.RouteNames
 import com.kreyenhagen.homewall.led.ringColor
 import com.kreyenhagen.homewall.ui.appViewModel
 import com.kreyenhagen.homewall.ui.components.BackButton
+import com.kreyenhagen.homewall.ui.components.DriveLeds
+import com.kreyenhagen.homewall.ui.components.WallLeds
 import com.kreyenhagen.homewall.ui.components.LayoutProblems
 import com.kreyenhagen.homewall.ui.components.TabletPreviews
 import com.kreyenhagen.homewall.ui.theme.HomeWallTheme
@@ -111,9 +113,12 @@ fun RouteEditorScreen(
             layout = it.layoutRepository.state,
             photo = it.wallPhotoRepository.state,
             settings = it.settingsRepository.settings,
+            sentFrame = it.ledSync.lastSent,
+            lightsOff = it.ledSync::lightsOff,
         )
     }
     val state by vm.uiState.collectAsStateWithLifecycle()
+    DriveLeds(state.ledFrame?.let(WallLeds::Frame))
     val snackbar = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
 
@@ -250,6 +255,7 @@ private fun EditorWall(state: RouteEditorUiState, layout: WallLayout, actions: E
         rings = state.rings,
         ringSizeIn = state.ringSizeIn,
         showMarkers = state.showMarkers,
+        ledPreview = state.ledPreview,
         zoomEnabled = true,
         onTapHold = actions.onTapHold,
     )
