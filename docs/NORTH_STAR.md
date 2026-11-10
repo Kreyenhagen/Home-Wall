@@ -181,7 +181,7 @@ Rules:
     - When a panel's height changes, scale the y of each hold on that panel proportionally (its fraction of the way up the panel stays the same). Shift every hold on the panels above it by the change in height.
     - When the width changes, scale every hold's x proportionally.
     - Then regenerate the straightened image (§7.1).
-- `id` is a stable Int. Routes reference holds by `id`. A new hold gets `id` = its lowest LED index, which is unique because an LED belongs to at most one hold. **Never renumber existing ids.**
+- `id` is a stable Int. Routes reference holds by `id`. A new hold gets `id` = its lowest LED index if no existing hold already uses that id; otherwise it gets the lowest unused id ≥ `ledCount`. The fallback is needed because ids never change while LEDs can move between holds: e.g. hold 37 owns LEDs [37, 38], LED 37 is remapped to a new spot, and hold 37 keeps its id with only LED 38, so the new hold can't also be 37. **Never renumber existing ids.**
 - `leds`: one or more indices, each `< ledCount`. Each LED belongs to at most one hold.
 - `hiddenLeds`: LEDs that have been reviewed and intentionally stay off. An LED in neither a hold nor `hiddenLeds` is **unmapped**. It is also always off, and Wall Setup lists it as still to do.
 - `group` (optional): a free-text label, for example the names of my grid patterns. It is only used to color debug markers.
@@ -714,7 +714,7 @@ Required unit tests:
 - **Route → frame:** paired LEDs; holds missing from the layout.
 - **Editor rules:** the start and finish limits, toggling, and undo/redo, including redo being cleared by a new change.
 - **Sort and filter:** all four orders, projects last, range edges, the include-projects switch.
-- **Layout:** validation (including panels), CSV import, the placeholder generator, and panel resizing (holds keep their relative positions; holds on higher panels shift).
+- **Layout:** validation (including panels), CSV import, the placeholder generator, panel resizing (holds keep their relative positions; holds on higher panels shift), and new-hold id assignment when the lowest LED index is already taken (§6.1).
 - **Rectifier:** each panel's quad corners map exactly to its band's corners.
 - **WallTransform:** wall → screen → wall round trip, with and without zoom.
 - **LedSync:** a fast burst of frames sends only the latest after the in-flight one finishes; a new session resends; an identical frame isn't resent.
@@ -770,7 +770,7 @@ Keep a short manual test checklist for each milestone in `PROGRESS.md`.
 - Wall coordinates are inches on the unfolded wall surface, origin at the bottom-left of the kicker. Positions survive retaking the photo.
 - The photo is straightened once per alignment, panel by panel. Every screen shows that flat, unfolded image.
 - Panel sizes are rough (about ±3 in) and stay editable. Changing them rescales the holds instead of invalidating the mapping.
-- A hold's id is its lowest LED index at creation, and ids never change.
+- A hold's id is its lowest LED index at creation (or the lowest unused id ≥ `ledCount` if that's taken), and ids never change.
 - Tapping an active hold always removes it. The editor's default role is Start, with no auto-switching.
 - Saving needs at least one hold. Missing a start or finish hold only shows a warning.
 - A new route's grade defaults to Project. Projects sort after graded routes.
