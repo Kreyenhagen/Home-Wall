@@ -3,6 +3,9 @@ package com.kreyenhagen.homewall
 import android.app.Application
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import com.kreyenhagen.homewall.data.layout.LayoutRepository
+import com.kreyenhagen.homewall.data.layout.layoutOrNull
+import com.kreyenhagen.homewall.data.photo.WallPhotoRepository
 import com.kreyenhagen.homewall.data.settings.AppSettings
 import com.kreyenhagen.homewall.data.settings.SettingsRepository
 import com.kreyenhagen.homewall.data.settings.settingsDataStore
@@ -18,6 +21,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileNotFoundException
 
 class App : Application() {
     lateinit var container: AppContainer
@@ -37,6 +42,13 @@ class AppContainer(context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val logBuffer = LogBuffer()
+
+    val layoutRepository = LayoutRepository(
+        file = File(appContext.filesDir, "wall_layout.json"),
+        readAsset = { appContext.readAssetOrNull("wall_layout.json") },
+    )
+
+    val wallPhotoRepository = WallPhotoRepository(appContext.filesDir, appContext.contentResolver)
 
     val settingsRepository = SettingsRepository(
         dataStore = appContext.settingsDataStore,
@@ -58,6 +70,10 @@ class AppContainer(context: Context) {
 
     init {
         appScope.launch {
+            layoutRepository.load()
+            wallPhotoRepository.load(layoutRepository.state.value.layoutOrNull?.wall)
+        }
+        appScope.launch {
             settingsRepository.settings
                 .map { it.simulatedLeds }
                 .distinctUntilChanged()
@@ -70,3 +86,9 @@ class AppContainer(context: Context) {
 
 private fun Context.isDebuggable(): Boolean =
     (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
+private fun Context.readAssetOrNull(name: String): String? = try {
+    assets.open(name).bufferedReader().use { it.readText() }
+} catch (e: FileNotFoundException) {
+    null
+}

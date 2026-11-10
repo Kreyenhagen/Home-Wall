@@ -1,8 +1,10 @@
 package com.kreyenhagen.homewall.ui.routelist
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.DropdownMenu
@@ -15,6 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -39,7 +42,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun RouteListScreen(onCreateRoute: () -> Unit, onOpenSettings: () -> Unit) {
-    val vm = appViewModel { RouteListViewModel(it.settingsRepository, it.ledController) }
+    val vm = appViewModel { RouteListViewModel(it.settingsRepository, it.layoutRepository, it.ledController) }
     val state by vm.uiState.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -101,13 +104,28 @@ fun RouteListContent(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-            Text(
-                "No routes yet. Tap Create to make one.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            state.banner?.let { Banner(it) }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "No routes yet. Tap Create to make one.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun Banner(text: String) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        )
     }
 }
 
@@ -152,7 +170,10 @@ val RouteSort.label: String
 private fun RouteListPreview() {
     HomeWallTheme {
         RouteListContent(
-            state = RouteListUiState(connection = ConnectionState.Simulated),
+            state = RouteListUiState(
+                connection = ConnectionState.Simulated,
+                banner = "Placeholder layout. Map your wall in Settings → Wall Setup.",
+            ),
             snackbarHostState = remember { SnackbarHostState() },
             onConnectClick = {},
             onSortSelected = {},
