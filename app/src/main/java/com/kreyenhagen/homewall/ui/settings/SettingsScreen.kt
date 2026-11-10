@@ -44,6 +44,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.kreyenhagen.homewall.R
+import com.kreyenhagen.homewall.data.backup.BackupArchive
+import com.kreyenhagen.homewall.data.backup.BackupContents
 import com.kreyenhagen.homewall.data.layout.LayoutFormat
 import com.kreyenhagen.homewall.data.layout.LayoutImport
 import com.kreyenhagen.homewall.data.settings.AppSettings
@@ -54,6 +56,10 @@ import com.kreyenhagen.homewall.ui.components.WallLeds
 import com.kreyenhagen.homewall.ui.components.BackButton
 import com.kreyenhagen.homewall.ui.components.TabletPreviews
 import com.kreyenhagen.homewall.ui.theme.HomeWallTheme
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
+import java.time.format.FormatStyle
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -68,6 +74,11 @@ fun SettingsScreen(onBack: () -> Unit, onOpenWallSetup: () -> Unit) {
             readLayout = it.layoutTransfer::read,
             applyLayout = it.layoutTransfer::apply,
             writeLayout = it.layoutTransfer::export,
+            readBackup = it.backupManager::read,
+            restoreBackup = it.backupManager::restore,
+            writeBackup = it.backupManager::export,
+            backupFileName = it.backupManager::fileName,
+            lightsOff = it.ledSync::lightsOff,
         )
     }
     val state by vm.uiState.collectAsStateWithLifecycle()
@@ -88,6 +99,12 @@ fun SettingsScreen(onBack: () -> Unit, onOpenWallSetup: () -> Unit) {
     }
     val import = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importLayout(uri)
+    }
+    val exportBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(BackupArchive.MIME_TYPE)) { uri ->
+        if (uri != null) vm.exportBackup(uri)
+    }
+    val importBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importBackup(uri)
     }
 
     SettingsContent(
@@ -111,12 +128,16 @@ fun SettingsScreen(onBack: () -> Unit, onOpenWallSetup: () -> Unit) {
                 onConfirmImport = vm::confirmImport,
                 onCancelImport = vm::cancelImport,
                 onDismissImportProblems = vm::dismissImportProblems,
+                onExportBackup = { exportBackup.launch(vm.backupFileName()) },
+                onImportBackup = { importBackup.launch(arrayOf(BackupArchive.MIME_TYPE, "application/x-zip-compressed", "application/octet-stream")) },
+                onConfirmBackup = vm::confirmBackup,
+                onCancelBackup = vm::cancelBackup,
             )
         },
     )
 }
 
-/** Settings → Data (§8.5): layout import and export. */
+/** Settings → Data (§8.5): layout import and export, and backups (§13). */
 class DataActions(
     val onExportJson: () -> Unit,
     val onExportCsv: () -> Unit,
@@ -124,6 +145,10 @@ class DataActions(
     val onConfirmImport: () -> Unit,
     val onCancelImport: () -> Unit,
     val onDismissImportProblems: () -> Unit,
+    val onExportBackup: () -> Unit = {},
+    val onImportBackup: () -> Unit = {},
+    val onConfirmBackup: () -> Unit = {},
+    val onCancelBackup: () -> Unit = {},
 ) {
     companion object {
         val None = DataActions({}, {}, {}, {}, {}, {})
@@ -180,7 +205,7 @@ fun SettingsContent(
                         onCommit = onRingSize,
                     )
                 }
-                item { SwitchRow("Keep screen on", null, s.keepScreenOn, onKeepScreenOn) }
+                item { SwitchRow("Keep screen on", "While a route is shown, so the tablet doesn't sleep while you climb.", s.keepScreenOn, onKeepScreenOn) }
 
                 item { SectionHeader("LEDs") }
                 item {
@@ -236,7 +261,15 @@ fun SettingsContent(
                 item {
                     ListItem(
                         headlineContent = { Text("Backup") },
-                        supportingContent = { Text("Routes and wall setup in one file. Arrives in M7.") },
+                        supportingContent = {
+                            Text("Routes, wall layout, photo and alignment in one zip. Import replaces all of them; settings stay as they are.")
+                        },
+                        trailingContent = {
+                            Row {
+                                TextButton(onClick = dataActions.onExportBackup, enabled = !state.busy) { Text("Export") }
+                                TextButton(onClick = dataActions.onImportBackup, enabled = !state.busy) { Text("Import") }
+                            }
+                        },
                     )
                 }
 
@@ -260,13 +293,22 @@ fun SettingsContent(
             dismissButton = { TextButton(onClick = dataActions.onCancelImport) { Text("Cancel") } },
         )
     }
-    state?.importProblems?.let { problems ->
+    state?.pendingBackup?.let { backup ->
+        AlertDialog(
+            onDismissRequest = dataActions.onCancelBackup,
+            title = { Text("Replace all routes and wall setup?") },
+            text = { Text(backupSummary(backup)) },
+            confirmButton = { TextButton(onClick = dataActions.onConfirmBackup) { Text("Replace") } },
+            dismissButton = { TextButton(onClick = dataActions.onCancelBackup) { Text("Cancel") } },
+        )
+    }
+    state?.importProblems?.let { found ->
         AlertDialog(
             onDismissRequest = dataActions.onDismissImportProblems,
-            title = { Text("This layout can't be imported") },
+            title = { Text(found.title) },
             text = {
                 Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
-                    problems.forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
+                    found.problems.forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
                 }
             },
             confirmButton = { TextButton(onClick = dataActions.onDismissImportProblems) { Text("OK") } },
@@ -375,3 +417,14 @@ private fun importSummary(import: LayoutImport): String {
 
 private fun formatIn(value: Float): String =
     if (value == Math.round(value).toFloat()) Math.round(value).toString() else String.format(Locale.getDefault(), "%.1f", value)
+
+/** What a restore will do, for the confirmation (§13). */
+private fun backupSummary(backup: BackupContents): String {
+    val made = try {
+        ZonedDateTime.parse(backup.manifest.createdAt).format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT))
+    } catch (e: DateTimeParseException) {
+        backup.manifest.createdAt
+    }
+    return "Backup from $made (app ${backup.manifest.appVersion}): ${backup.summary}.\n\n" +
+        "Every route, the wall layout, the photo and its alignment are replaced with the backup's. Settings stay as they are."
+}

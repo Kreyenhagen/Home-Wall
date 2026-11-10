@@ -1,6 +1,5 @@
 package com.kreyenhagen.homewall.ui.components
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
@@ -8,16 +7,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.kreyenhagen.homewall.R
@@ -34,26 +30,6 @@ fun BackButton(onClick: () -> Unit) {
     }
 }
 
-/** Centered placeholder for screens that later milestones fill in. */
-@Composable
-fun StubBody(title: String, description: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(title, style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = description,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.widthIn(max = 480.dp),
-        )
-    }
-}
-
 /** Shown instead of the wall when `wall_layout.json` can't be used (§6.1: list every problem, never crash). */
 @Composable
 fun LayoutProblems(problems: List<String>, modifier: Modifier = Modifier) {
@@ -62,5 +38,13 @@ fun LayoutProblems(problems: List<String>, modifier: Modifier = Modifier) {
         Spacer(Modifier.height(8.dp))
         if (problems.isEmpty()) Text("Loading…")
         problems.forEach { Text("•  $it", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp)) }
+        if (problems.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Text(
+                "The file is left as it is. To fix it, import a corrected layout or a backup in Settings → Data.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

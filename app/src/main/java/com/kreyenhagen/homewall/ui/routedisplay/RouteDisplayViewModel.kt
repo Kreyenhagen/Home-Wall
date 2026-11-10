@@ -46,6 +46,8 @@ data class RouteDisplayUiState(
     val showMarkers: Boolean = AppSettings().showHoldMarkers,
     /** What the wall shows for the current page (§8.2); null while there is nothing to show. */
     val ledFrame: LedFrame? = null,
+    /** Settings → Keep screen on (§8.2). */
+    val keepScreenOn: Boolean = AppSettings().keepScreenOn,
     /** holdId → dot color, when Show LED preview is on. */
     val ledPreview: Map<Int, Color> = emptyMap(),
 ) {
@@ -60,6 +62,8 @@ class RouteDisplayViewModel(
     photo: Flow<WallPhotoState>,
     /** The last frame actually sent to the controller (LedSync.lastSent). */
     sentFrame: Flow<LedFrame?> = flowOf(null),
+    /** Remembers the route on screen, so Route List can scroll back to it (§8.1). */
+    private val onRouteShown: (Long) -> Unit = {},
 ) : ViewModel() {
 
     /**
@@ -97,6 +101,7 @@ class RouteDisplayViewModel(
                 image = photoState.rectified,
                 ringSizeIn = s.ringSizeIn,
                 showMarkers = s.showHoldMarkers,
+                keepScreenOn = s.keepScreenOn,
                 ledFrame = pages.getOrNull(index)?.route?.let { route ->
                     readyLayout?.let { RouteFrames.forRoute(route.holds, it) }
                 },
@@ -107,6 +112,7 @@ class RouteDisplayViewModel(
     /** The pager moved (it changes halfway through a swipe, §8.2). */
     fun onPageChanged(routeId: Long, index: Int) {
         current.value = Current(routeId, index)
+        onRouteShown(routeId)
     }
 
     /** About to open the editor for [routeId]: keep it in the list when I come back. */

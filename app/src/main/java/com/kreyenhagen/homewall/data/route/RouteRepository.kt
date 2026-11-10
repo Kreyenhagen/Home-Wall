@@ -29,4 +29,11 @@ class RouteRepository(
     }
 
     suspend fun delete(id: Long) = dao.delete(id)
+
+    /** Every route, for a backup (§13). */
+    suspend fun all(): List<Route> = dao.getAll().map { it.toRoute() }
+
+    /** Replaces every route with [routes], keeping their ids and dates (restoring a backup, §13). */
+    suspend fun replaceAll(routes: List<Route>) =
+        dao.replaceAll(routes.map { RouteEntity(it.id, it.name, it.grade, it.holds, it.createdAt, it.updatedAt) })
 }

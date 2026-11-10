@@ -7,6 +7,7 @@ import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import com.kreyenhagen.homewall.ble.BleLedController
 import com.kreyenhagen.homewall.ble.BlePermissions
+import com.kreyenhagen.homewall.data.backup.BackupManager
 import com.kreyenhagen.homewall.data.layout.LayoutRepository
 import com.kreyenhagen.homewall.data.layout.LayoutTransfer
 import com.kreyenhagen.homewall.data.layout.layoutOrNull
@@ -73,6 +74,18 @@ class AppContainer(context: Context) {
     private val database = AppDatabase.create(appContext)
 
     val routeRepository = RouteRepository(database.routeDao())
+
+    /** Settings → Export / Import backup (§13). */
+    val backupManager = BackupManager(
+        resolver = appContext.contentResolver,
+        routes = routeRepository,
+        layout = layoutRepository,
+        photo = wallPhotoRepository,
+        appVersion = appContext.versionName(),
+    )
+
+    /** The route Route Display showed last, so Route List can scroll back to it (§8.1). In memory only. */
+    val lastViewedRouteId = MutableStateFlow<Long?>(null)
 
     val settingsRepository = SettingsRepository(
         dataStore = appContext.settingsDataStore,
@@ -174,3 +187,6 @@ private fun Context.readAssetOrNull(name: String): String? = try {
 } catch (e: FileNotFoundException) {
     null
 }
+
+private fun Context.versionName(): String =
+    packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"

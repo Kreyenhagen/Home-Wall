@@ -35,6 +35,7 @@ class RouteDisplayViewModelTest {
     private val routes = MutableStateFlow(listOf(route(1, 2), route(2, null), route(3, 5), route(4, 8)))
     private val settings = MutableStateFlow(AppSettings(sort = RouteSort.NEWEST, gradeFilter = GradeFilter(includeProjects = false)))
     private val sentFrame = MutableStateFlow<LedFrame?>(null)
+    private val shown = mutableListOf<Long>()
 
     private fun TestScope.display(openedId: Long): RouteDisplayViewModel {
         val vm = RouteDisplayViewModel(
@@ -44,6 +45,7 @@ class RouteDisplayViewModelTest {
             MutableStateFlow(LayoutState.Ready(PlaceholderLayout.create())),
             MutableStateFlow(WallPhotoState(loaded = true)),
             sentFrame,
+            onRouteShown = { shown += it },
         )
         backgroundScope.launch(main.dispatcher) { vm.uiState.collect {} }
         return vm
@@ -141,5 +143,21 @@ class RouteDisplayViewModelTest {
         assertEquals(2, RouteDisplayViewModel.indexOf(listOf(5L, 6, 7), 7, lastIndex = 0))
         assertEquals(2, RouteDisplayViewModel.indexOf(listOf(5L, 6, 7), 99, lastIndex = 4))
         assertEquals(0, RouteDisplayViewModel.indexOf(emptyList(), 99, lastIndex = 4))
+    }
+
+    @Test
+    fun theRouteOnScreenIsRememberedForTheList() = runTest {
+        val vm = display(openedId = 3)
+        vm.onPageChanged(4, 0)
+        vm.onPageChanged(1, 2)
+        assertEquals(listOf(4L, 1), shown) // Route List scrolls back to the last one (§8.1)
+    }
+
+    @Test
+    fun keepScreenOnFollowsTheSetting() = runTest {
+        val vm = display(openedId = 3)
+        assertEquals(true, vm.uiState.value.keepScreenOn) // on by default (§6.5)
+        settings.value = settings.value.copy(keepScreenOn = false)
+        assertEquals(false, vm.uiState.value.keepScreenOn)
     }
 }

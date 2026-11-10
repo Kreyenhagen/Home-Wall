@@ -10,7 +10,7 @@
 | M4 ESP32 firmware | **Built.** `firmware/home_wall/home_wall.ino` compiles with `arduino-cli` for ESP32 Dev Module at default settings on core 3.3.12 (87% of program storage) and 2.0.17 (89%), with FastLED 3.10.9 and no warnings from the sketch. Not yet uploaded; see the M4 steps below. |
 | M5 LEDs in the app | **Built.** `assembleDebug testDebugUnitTest` passes (165 tests). Not yet run on the AVD or with the ESP32; see the M5 checklist below. |
 | M6 Wall Setup mapping | **Built.** `assembleDebug testDebugUnitTest` passes (212 tests). Not yet run on the AVD or the real wall; see the M6 checklist below. |
-| M7 Polish & safety | Not started |
+| M7 Polish & safety | **Built.** `assembleDebug testDebugUnitTest` passes (232 tests). Not yet run on the AVD or tablet; see the M7 checklist below. |
 
 ## Toolchain
 
@@ -172,6 +172,46 @@ M6 notes (consistent with the doc unless marked, listed so they are not a surpri
 - Export and import go through the system file picker (Create document / Open document).
 - No protocol or firmware changes.
 
+M7 notes (consistent with the doc unless marked, listed so they are not a surprise):
+- **Backup zip (§13).** `manifest.json` has `schemaVersion` (1), `appVersion` and `createdAt`
+  (ISO-8601 with the time zone). `routes.json` is a list of routes with the same fields as the
+  database, ids and dates included. `wall_layout.json` and `wall_photo.json` are the same files the
+  app keeps. `wall_photo.jpg` is the original photo, byte for byte. The photo files are left out
+  when there's no photo.
+- **Import backup** checks everything first (every problem is listed, as with layouts), then asks
+  "Replace all routes and wall setup?" with what the backup holds. It replaces the layout, every
+  route (in one database transaction, so the old routes are never half-replaced), and the photo and
+  alignment (removed if the backup has none), then regenerates the straightened image. Settings,
+  including the saved board, stay as they are. After a restore the wall turns off, since the
+  remembered route may not exist any more.
+- A backup from a newer app (schema version above 1) is refused with "Update the app". Unknown
+  extra fields and files are ignored, so later versions can add to the format.
+- Export is refused while the layout file is broken, because that backup couldn't be restored.
+  Import still works then, and fixes it.
+- Restoring isn't atomic across the three stores: the layout is replaced first, then the routes,
+  then the photo. Because everything was checked first, only a storage error can stop it part way,
+  and the message then says what was restored.
+- Android Auto Backup stays on (the default), as a second safety net.
+- **Keep screen on** applies on Route Display only, as §8.2 says. The Settings row now says so.
+- **List scroll restore.** Back from Route Display, the list scrolls to the route Route Display
+  showed last (after any swiping), unless it's already in view. It only does this once per visit,
+  so rotating the list later doesn't jump. It also works after creating a route.
+- **Bluetooth turned off mid-session.** The app now listens for Bluetooth on/off. Turning it off
+  ends the connection at once (and any scan), and the button shows "Bluetooth is off". Turning it
+  back on reconnects to the board straight away instead of after up to 10 s. If Bluetooth was
+  already off when the app started, tapping Connect asks to turn it on, as before.
+- **ESP32 out of range or powered off.** Unchanged from M5: the button turns amber and the app keeps
+  retrying (1, 2, 4, then every 10 s) while it's in the foreground. The wall keeps the last frame
+  (firmware), and the current frame is resent as soon as the board is back.
+- **Broken layout file.** The Route List banner and the problems screen now say how to fix it
+  (import a layout or a backup in Settings → Data), since the file itself can't be reached
+  without a computer.
+- Landscape: every screen with the wall already puts it on the left with the controls on the right
+  (Route Display, the editor, and all four Wall Setup steps). Route List and Settings are centered
+  lists that work either way.
+- Removed `StubBody`, which nothing has used since M6.
+- No protocol or firmware changes. No database schema change (only new queries), so no migration.
+
 ## To do by hand
 
 - [x] ~~Update Android Studio to 2026.2.2 or newer.~~ Done; the project syncs.
@@ -185,6 +225,7 @@ M6 notes (consistent with the doc unless marked, listed so they are not a surpri
 - [ ] Say whether connecting to the saved board at launch is what you want (see M5 notes).
 - [ ] Run the M6 checklist, then map the real wall (about 30–45 minutes) and send me or commit the exported `wall_layout.json` as `app/src/main/assets/wall_layout.json`.
 - [ ] Say whether the M6 CSV and Review choices in the M6 notes above are OK (marked "my reading").
+- [ ] Run the M7 checklist, including a backup round trip on the tablet. Keep a backup somewhere off the tablet once the wall is mapped.
 
 ## M1 manual test checklist (AVD)
 
@@ -332,3 +373,24 @@ Note: with the placeholder layout, hold *n* is LED *n*, so the LEDs that light a
 - [ ] **Light all holds**: every hold glows dim white on the wall. Tap any marker that looks wrong: only that hold lights brightly; fix it with Move, Remove LED or Delete hold, or remap the LED in Map LEDs.
 - [ ] Export the JSON and send it to me (or commit it as `app/src/main/assets/wall_layout.json`), so a fresh install starts with the real wall.
 - [ ] Import that same JSON: the summary and markers are identical.
+
+## M7 manual test checklist
+
+**On the AVD:**
+
+- [ ] Make a few routes. Settings → Data → Backup → **Export**: the file picker suggests `homewall-backup-YYYYMMDD-HHmm.zip`. Save it → "Backup saved".
+- [ ] Change things: delete a route, edit another, map or move a hold in Wall Setup.
+- [ ] Backup → **Import** → pick the zip → "Replace all routes and wall setup?" lists the date, route count, layout summary and photo. **Replace** → "Backup restored". Every route is back as it was (names, grades, holds, list order by date), and Wall Setup shows the old layout and photo.
+- [ ] Import something that isn't a backup (e.g. the layout JSON): "This backup can't be restored" with the reason, and nothing changes.
+- [ ] Keep screen on: set the AVD's screen timeout to 15 s. On Route Display the screen stays on; on Route List it times out. Turn Keep screen on off in Settings: Route Display times out too.
+- [ ] Scroll restore: with 20+ routes, open one near the top, swipe ten routes on, press Back: the list scrolls to that route. Rotate the list: it stays where it is.
+- [ ] Create a route from a list scrolled far down → Save → Back: the list shows the new route.
+- [ ] Rotate every screen (Route List, Route Display, editor, Save dialog, Settings, all four Wall Setup steps, the filter sheet, the device picker): everything stays usable, with the wall on the left in landscape.
+- [ ] No photo: on a fresh install (or after restoring a backup with no photo) every screen shows the plain wall with the fold line.
+- [ ] Broken layout: in Android Studio's Device Explorer, open `/data/data/com.kreyenhagen.homewall/files/wall_layout.json`, put one LED in two holds, save it back and force-stop the app. Reopen: Route List shows the banner, Route Display, the editor and Wall Setup list the problem with how to fix it, and nothing crashes. Settings → Import layout (a good JSON) or Import backup fixes it.
+
+**On the tablet:**
+
+- [ ] Backup round trip: export, uninstall and reinstall the app (or clear its data), import: routes, layout, photo and alignment all come back, and the straightened image is regenerated.
+- [ ] Connected to the board, turn Bluetooth off from quick settings: the button shows "Bluetooth is off" right away. Turn it back on: it reconnects within a few seconds and the wall shows the current route again.
+- [ ] Unplug the ESP32 for a minute: the button goes amber and keeps retrying; plug it back in: it reconnects and the route comes back. Walk out of range with the tablet and back: same.

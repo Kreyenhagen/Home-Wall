@@ -6,6 +6,7 @@ import androidx.room.Database
 import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Room
+import androidx.room.Transaction
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.Update
@@ -25,6 +26,22 @@ interface RouteDao {
 
     @Update
     suspend fun update(route: RouteEntity)
+
+    @Query("SELECT * FROM routes")
+    suspend fun getAll(): List<RouteEntity>
+
+    @Insert
+    suspend fun insertAll(routes: List<RouteEntity>)
+
+    @Query("DELETE FROM routes")
+    suspend fun deleteAll()
+
+    /** Restoring a backup (§13): all or nothing, so a failure never leaves half the routes. */
+    @Transaction
+    suspend fun replaceAll(routes: List<RouteEntity>) {
+        deleteAll()
+        insertAll(routes)
+    }
 
     @Query("DELETE FROM routes WHERE id = :id")
     suspend fun delete(id: Long)

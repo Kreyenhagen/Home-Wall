@@ -8,7 +8,10 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.ParcelUuid
 import com.kreyenhagen.homewall.led.ConnectionState
 import com.kreyenhagen.homewall.led.LedController
@@ -21,6 +24,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +32,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -57,6 +62,11 @@ class BleLedController(
     private val link = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     private val scanning = MutableStateFlow(false)
 
+    private val _bluetoothOn = MutableStateFlow(adapter?.isEnabled == true)
+
+    /** Whether the tablet's Bluetooth is on, kept up to date by the system broadcast. */
+    val bluetoothOn: StateFlow<Boolean> = _bluetoothOn.asStateFlow()
+
     override val state: StateFlow<ConnectionState> =
         combine(link, scanning) { l, s ->
             if (s && (l == ConnectionState.Disconnected || l is ConnectionState.Error)) ConnectionState.Scanning else l
@@ -70,6 +80,25 @@ class BleLedController(
 
     private var connectionJob: Job? = null
     private var scanTimeout: Job? = null
+
+    init {
+        // System broadcasts reach a not-exported receiver; the controller lives as long as the app.
+        context.registerReceiver(
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    val on = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR) == BluetoothAdapter.STATE_ON
+                    if (_bluetoothOn.value != on) log(if (on) "Bluetooth turned on" else "Bluetooth turned off")
+                    _bluetoothOn.value = on
+                    if (!on && scanning.value) {
+                        stopScan()
+                        _scan.update { it.copy(error = "Bluetooth was turned off") }
+                    }
+                }
+            },
+            IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
+            Context.RECEIVER_NOT_EXPORTED,
+        )
+    }
 
     @Volatile
     private var activeLink: GattLink? = null
@@ -163,11 +192,15 @@ class BleLedController(
         }
     }
 
-    /** Waits [ms], or less if the app comes back to the foreground in the meantime. */
+    /**
+     * Waits [ms], or less if a retry could now work: the app came back to the foreground, or
+     * Bluetooth was turned back on.
+     */
     private suspend fun waitBeforeRetry(ms: Long) {
         withTimeoutOrNull(ms) {
-            foreground.first { !it }
-            foreground.first { it }
+            combine(foreground, bluetoothOn) { fg, on -> fg && on }
+                .dropWhile { it } // already able to connect: wait for a change
+                .first { it }
         }
     }
 
@@ -236,7 +269,14 @@ class BleLedController(
             _session.value = ++sessionCounter
             log("Connected to $name (MTU $mtu)")
 
-            val status = gattLink.disconnected.await()
+            // Turning Bluetooth off ends the connection; don't wait for the stack to report it.
+            val status = coroutineScope {
+                val watch = launch {
+                    bluetoothOn.first { !it }
+                    gattLink.close("ended: Bluetooth turned off")
+                }
+                gattLink.disconnected.await().also { watch.cancel() }
+            }
             log("Connection lost (status $status)")
             return Outcome.Dropped
         } catch (e: GattException) {

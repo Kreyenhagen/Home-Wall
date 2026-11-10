@@ -11,6 +11,7 @@ import com.kreyenhagen.homewall.domain.RouteSort
 import com.kreyenhagen.homewall.domain.RouteSorting
 import com.kreyenhagen.homewall.led.ConnectionState
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -30,6 +31,8 @@ data class RouteListUiState(
     val banner: String? = null,
     /** The controller and the layout disagree on the LED count (§10.3 step 5). */
     val ledCountWarning: String? = null,
+    /** Back from Route Display: the list row of the last route I viewed, to scroll to (§8.1). */
+    val scrollTo: Int? = null,
 )
 
 class RouteListViewModel(
@@ -40,24 +43,28 @@ class RouteListViewModel(
     private val setSort: suspend (RouteSort) -> Unit,
     private val setFilter: suspend (GradeFilter) -> Unit,
     private val onLightsOff: () -> Unit = {},
+    /** Set by Route Display (AppContainer.lastViewedRouteId); cleared here once it's been used. */
+    private val lastViewedRoute: MutableStateFlow<Long?> = MutableStateFlow(null),
 ) : ViewModel() {
 
     val uiState: StateFlow<RouteListUiState> =
-        combine(routes, settings, layout, connection) { all, s, layoutState, conn ->
+        combine(routes, settings, layout, connection, lastViewedRoute) { all, s, layoutState, conn, lastViewed ->
+            val shown = RouteSorting.apply(all, s.sort, s.gradeFilter)
             RouteListUiState(
                 loaded = true,
-                routes = RouteSorting.apply(all, s.sort, s.gradeFilter),
+                routes = shown,
                 totalRoutes = all.size,
                 sort = s.sort,
                 filter = s.gradeFilter,
                 connection = conn,
                 banner = bannerFor(layoutState),
                 ledCountWarning = ledCountWarning(conn, layoutState.layoutOrNull?.ledCount),
+                scrollTo = lastViewed?.let { id -> shown.indexOfFirst { it.id == id }.takeIf { it >= 0 } },
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RouteListUiState())
 
     private fun bannerFor(layout: LayoutState): String? = when {
-        layout is LayoutState.Invalid -> "The wall layout file has problems. See Settings → Wall Setup → Align."
+        layout is LayoutState.Invalid -> "The wall layout file has problems, so routes can't be shown. Import a layout or a backup in Settings → Data."
         layout.layoutOrNull?.placeholder == true -> "Placeholder layout. Map your wall in Settings → Wall Setup."
         else -> null
     }
@@ -74,6 +81,19 @@ class RouteListViewModel(
 
     /** Lights off (§8.1): clears the wall and the remembered route. */
     fun lightsOff() = onLightsOff()
+
+    /**
+     * About to open a route or the editor. Forgets the last viewed route, so the list scrolls only
+     * to the one Route Display shows last this time.
+     */
+    fun onLeaving() {
+        lastViewedRoute.value = null
+    }
+
+    /** The list has scrolled to [RouteListUiState.scrollTo] (or it was already in view). */
+    fun scrollRestored() {
+        lastViewedRoute.value = null
+    }
 
     companion object {
         fun ledCountWarning(connection: ConnectionState, layoutLedCount: Int?): String? {

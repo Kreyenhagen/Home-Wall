@@ -145,6 +145,36 @@ class WallPhotoRepository(
         return saveAlignment(alignment, geometry)
     }
 
+    /** The photo as stored and its alignment, for a backup (§13). */
+    suspend fun backupFiles(): Pair<ByteArray?, PhotoAlignment?> = mutex.withLock {
+        withContext(io) {
+            val photo = if (photoFile.exists()) photoFile.readBytes() else null
+            photo to _state.value.alignment
+        }
+    }
+
+    /**
+     * Restoring a backup (§13): replaces the photo and its alignment (either may be missing) and
+     * regenerates the straightened image. The files are replaced even if straightening fails.
+     */
+    suspend fun restore(photo: ByteArray?, alignment: PhotoAlignment?, geometry: WallGeometry): PhotoResult = mutex.withLock {
+        working {
+            if (photo != null) writeAtomically(photoFile) { it.write(photo) } else photoFile.delete()
+            if (alignment != null) writeTextAtomically(alignmentFile, PhotoAlignment.encode(alignment)) else alignmentFile.delete()
+            rectifiedFile.delete()
+            var result: PhotoResult = PhotoResult.Done
+            var rectified: ImageBitmap? = null
+            if (photo != null && alignment != null) {
+                when (val s = straighten(alignment, geometry)) {
+                    is Straightened.Ok -> rectified = s.bitmap.toImageBitmap()
+                    is Straightened.Failed -> result = PhotoResult.Failed(s.message)
+                }
+            }
+            _state.update { it.copy(loaded = true, hasPhoto = photo != null, alignment = alignment, rectified = rectified) }
+            result
+        }
+    }
+
     private sealed interface Straightened {
         class Ok(val bitmap: Bitmap) : Straightened
         class Failed(val message: String) : Straightened

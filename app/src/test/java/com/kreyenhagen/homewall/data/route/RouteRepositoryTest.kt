@@ -1,6 +1,7 @@
 package com.kreyenhagen.homewall.data.route
 
 import com.kreyenhagen.homewall.domain.HoldRole
+import com.kreyenhagen.homewall.domain.Route
 import com.kreyenhagen.homewall.domain.RouteHold
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +32,17 @@ class FakeRouteDao : RouteDao {
     override suspend fun update(route: RouteEntity) = rows.update { list -> list.map { if (it.id == route.id) route else it } }
 
     override suspend fun delete(id: Long) = rows.update { list -> list.filterNot { it.id == id } }
+
+    override suspend fun getAll(): List<RouteEntity> = rows.value
+
+    override suspend fun insertAll(routes: List<RouteEntity>) {
+        rows.update { it + routes }
+        nextId = maxOf(nextId, (routes.maxOfOrNull { it.id } ?: 0) + 1)
+    }
+
+    override suspend fun deleteAll() {
+        rows.value = emptyList()
+    }
 }
 
 class RouteRepositoryTest {
@@ -71,6 +83,20 @@ class RouteRepositoryTest {
         assertFalse(repo.update(id, "Gone", null, holds))
         assertNull(repo.get(id))
         assertEquals(emptyList<Any>(), repo.routes.first())
+    }
+
+    @Test
+    fun replaceAllKeepsIdsAndDates() = runTest {
+        repo.create("Old", 1, emptyList())
+        val restored = listOf(
+            Route(5, "Restored", 3, listOf(RouteHold(1, HoldRole.START)), createdAt = 10, updatedAt = 20),
+            Route(9, "Project", null, emptyList(), createdAt = 30, updatedAt = 30),
+        )
+        repo.replaceAll(restored)
+        assertEquals(restored, repo.all())
+        assertEquals(restored, repo.routes.first())
+        // New routes after a restore never reuse a restored id.
+        assertEquals(10L, repo.create("Next", null, emptyList()))
     }
 }
 

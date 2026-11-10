@@ -43,6 +43,7 @@ import com.kreyenhagen.homewall.ui.components.BackButton
 import com.kreyenhagen.homewall.ui.components.DriveLeds
 import com.kreyenhagen.homewall.ui.components.WallLeds
 import com.kreyenhagen.homewall.ui.components.GradeChip
+import com.kreyenhagen.homewall.ui.components.KeepScreenOn
 import com.kreyenhagen.homewall.ui.components.LayoutProblems
 import com.kreyenhagen.homewall.ui.components.TabletPreviews
 import com.kreyenhagen.homewall.ui.theme.HomeWallTheme
@@ -58,12 +59,14 @@ fun RouteDisplayScreen(routeId: Long, onBack: () -> Unit, onEdit: (routeId: Long
             layout = it.layoutRepository.state,
             photo = it.wallPhotoRepository.state,
             sentFrame = it.ledSync.lastSent,
+            onRouteShown = { id -> it.lastViewedRouteId.value = id },
         )
     }
     val state by vm.uiState.collectAsStateWithLifecycle()
     // The current page's route, live: currentPage flips halfway through a swipe (§8.2). LedSync
     // drops stale frames when I swipe faster than the wall can keep up (§9.1).
     DriveLeds(state.ledFrame?.let(WallLeds::Route))
+    KeepScreenOn(state.loaded && state.keepScreenOn)
     RouteDisplayContent(
         state = state,
         onBack = onBack,

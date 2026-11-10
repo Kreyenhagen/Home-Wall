@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -38,9 +40,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,6 +68,7 @@ import com.kreyenhagen.homewall.ui.components.WallLeds
 import com.kreyenhagen.homewall.ui.components.GradeChip
 import com.kreyenhagen.homewall.ui.components.TabletPreviews
 import com.kreyenhagen.homewall.ui.theme.HomeWallTheme
+import kotlinx.coroutines.flow.first
 import kotlin.math.roundToInt
 
 @Composable
@@ -76,6 +82,7 @@ fun RouteListScreen(onOpenRoute: (routeId: Long) -> Unit, onCreateRoute: () -> U
             setSort = it.settingsRepository::setSort,
             setFilter = it.settingsRepository::setGradeFilter,
             onLightsOff = it.ledSync::lightsOff,
+            lastViewedRoute = it.lastViewedRouteId,
         )
     }
     val state by vm.uiState.collectAsStateWithLifecycle()
@@ -90,9 +97,16 @@ fun RouteListScreen(onOpenRoute: (routeId: Long) -> Unit, onCreateRoute: () -> U
         onSortSelected = vm::selectSort,
         onFilterChange = vm::selectFilter,
         onResetFilter = vm::resetFilter,
-        onOpenRoute = onOpenRoute,
-        onCreateRoute = onCreateRoute,
+        onOpenRoute = { id ->
+            vm.onLeaving()
+            onOpenRoute(id)
+        },
+        onCreateRoute = {
+            vm.onLeaving()
+            onCreateRoute()
+        },
         onOpenSettings = onOpenSettings,
+        onScrollRestored = vm::scrollRestored,
     )
 }
 
@@ -109,7 +123,17 @@ fun RouteListContent(
     onOpenRoute: (Long) -> Unit,
     onCreateRoute: () -> Unit,
     onOpenSettings: () -> Unit,
+    onScrollRestored: () -> Unit = {},
 ) {
+    val listState = rememberLazyListState()
+    val scrolled by rememberUpdatedState(onScrollRestored)
+    // Back from Route Display: bring the last viewed route into view (§8.1), once.
+    LaunchedEffect(state.scrollTo) {
+        val index = state.scrollTo ?: return@LaunchedEffect
+        snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > index }
+        if (!listState.isFullyVisible(index)) listState.scrollToItem(maxOf(0, index - 2))
+        scrolled()
+    }
     var showFilter by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
@@ -159,7 +183,7 @@ fun RouteListContent(
                     state.routes.isEmpty() -> EmptyState("No routes match this filter") {
                         Button(onClick = onResetFilter) { Text("Reset filter") }
                     }
-                    else -> RouteRows(state.routes, onOpenRoute)
+                    else -> RouteRows(state.routes, listState, onOpenRoute)
                 }
             }
         }
@@ -176,8 +200,9 @@ fun RouteListContent(
 }
 
 @Composable
-private fun RouteRows(routes: List<Route>, onOpenRoute: (Long) -> Unit) {
+private fun RouteRows(routes: List<Route>, listState: LazyListState, onOpenRoute: (Long) -> Unit) {
     LazyColumn(
+        state = listState,
         modifier = Modifier.widthIn(max = 840.dp).fillMaxSize(),
         // Room under the last row for the Create button.
         contentPadding = PaddingValues(bottom = 96.dp),
@@ -354,4 +379,10 @@ private fun RouteListFilteredOutPreview() {
             onOpenSettings = {},
         )
     }
+}
+
+private fun LazyListState.isFullyVisible(index: Int): Boolean {
+    val info = layoutInfo
+    val item = info.visibleItemsInfo.firstOrNull { it.index == index } ?: return false
+    return item.offset >= info.viewportStartOffset && item.offset + item.size <= info.viewportEndOffset - info.afterContentPadding
 }
