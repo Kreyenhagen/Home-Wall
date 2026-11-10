@@ -78,6 +78,22 @@ class LayoutRepository(
         UpdateResult.Saved
     }
 
+    /**
+     * Replaces the whole layout, e.g. from an import I confirmed (§12.3). Unlike [update], this also
+     * works when the saved file is broken: replacing it is how it gets fixed.
+     */
+    suspend fun replace(layout: WallLayout): UpdateResult = mutex.withLock {
+        val problems = LayoutValidator.validate(layout)
+        if (problems.isNotEmpty()) return UpdateResult.Rejected(problems)
+        try {
+            withContext(io) { write(layout) }
+        } catch (e: IOException) {
+            return UpdateResult.Rejected(listOf("Couldn't save the layout: ${e.message}"))
+        }
+        _state.value = LayoutState.Ready(layout)
+        UpdateResult.Saved
+    }
+
     private fun read(text: String, source: String): LayoutState = when (val result = LayoutJson.parse(text)) {
         is LayoutJson.ParseResult.Ok -> LayoutState.Ready(result.layout)
         is LayoutJson.ParseResult.Failed -> LayoutState.Invalid(result.problems.map { "$source: $it" })

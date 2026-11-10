@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -69,6 +70,10 @@ fun WallView(
     ledPreview: Map<Int, Color> = emptyMap(),
     showLabels: Boolean = true,
     zoomEnabled: Boolean = false,
+    /** Caps the tap radius around a hold (§7.4), in inches. */
+    maxHitRadiusIn: Float = Float.POSITIVE_INFINITY,
+    /** When set, a one-finger drag reports its movement in wall inches (Review → Move, §12.2). */
+    onDrag: ((dxIn: Float, dyIn: Float) -> Unit)? = null,
     onTapHold: ((holdId: Int) -> Unit)? = null,
     onTapEmpty: ((WallPoint) -> Unit)? = null,
 ) {
@@ -100,6 +105,8 @@ fun WallView(
     val currentSpacing by rememberUpdatedState(medianSpacingIn)
     val currentOnTapHold by rememberUpdatedState(onTapHold)
     val currentOnTapEmpty by rememberUpdatedState(onTapEmpty)
+    val currentOnDrag by rememberUpdatedState(onDrag)
+    val currentMaxHitRadius by rememberUpdatedState(maxHitRadiusIn)
     val zoomedIn = zoomPan.zoom > 1f
 
     Canvas(
@@ -118,11 +125,21 @@ fun WallView(
                     onTap = { position ->
                         val t = currentTransform ?: return@detectTapGestures
                         val point = t.screenToWall(position)
-                        val radius = HoldHitTest.hitRadiusIn(currentSpacing, t.scale, MIN_HIT_RADIUS.toPx())
+                        val radius = HoldHitTest.hitRadiusIn(currentSpacing, t.scale, MIN_HIT_RADIUS.toPx(), currentMaxHitRadius)
                         val hold = HoldHitTest.holdAt(currentHolds, point, radius)
                         if (hold != null) currentOnTapHold?.invoke(hold.id) else currentOnTapEmpty?.invoke(point)
                     },
                 )
+            }
+            .pointerInput(onDrag != null) {
+                if (onDrag == null) return@pointerInput
+                detectDragGestures { change, _ ->
+                    val t = currentTransform ?: return@detectDragGestures
+                    val from = t.screenToWall(change.previousPosition)
+                    val to = t.screenToWall(change.position)
+                    change.consume()
+                    currentOnDrag?.invoke(to.x - from.x, to.y - from.y)
+                }
             }
             .pointerInput(zoomEnabled) {
                 if (!zoomEnabled) return@pointerInput

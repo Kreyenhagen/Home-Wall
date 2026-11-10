@@ -1,16 +1,23 @@
 package com.kreyenhagen.homewall.ui.settings
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.kreyenhagen.homewall.data.layout.LayoutFormat
+import com.kreyenhagen.homewall.data.layout.LayoutImport
+import com.kreyenhagen.homewall.data.layout.LayoutTransfer
 import com.kreyenhagen.homewall.data.settings.AppSettings
 import com.kreyenhagen.homewall.data.settings.SettingsRepository
 import com.kreyenhagen.homewall.led.LedController
+import com.kreyenhagen.homewall.ui.components.UserMessage
 import com.kreyenhagen.homewall.ui.components.label
 import com.kreyenhagen.homewall.util.LogBuffer
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -22,6 +29,12 @@ data class SettingsUiState(
     val connection: String,
     /** Newest first. */
     val log: List<String>,
+    /** A layout read from a file, waiting for me to confirm the import (§12.3). */
+    val pendingImport: LayoutImport? = null,
+    /** Why the last import couldn't be used: every problem found. */
+    val importProblems: List<String>? = null,
+    val busy: Boolean = false,
+    val message: UserMessage? = null,
 )
 
 class SettingsViewModel(
@@ -30,17 +43,78 @@ class SettingsViewModel(
     logBuffer: LogBuffer,
     /** Forgetting the board also disconnects from it (§8.1). */
     private val disconnect: () -> Unit = {},
+    /** Layout import and export (§8.5, §12.3); LayoutTransfer in the app. */
+    private val readLayout: suspend (Uri) -> LayoutTransfer.ReadResult = { LayoutTransfer.ReadResult.Failed(listOf("Not available")) },
+    private val applyLayout: suspend (LayoutImport) -> List<String> = { emptyList() },
+    private val writeLayout: suspend (Uri, LayoutFormat) -> String? = { _, _ -> null },
 ) : ViewModel() {
+
+    private data class Local(
+        val pendingImport: LayoutImport? = null,
+        val importProblems: List<String>? = null,
+        val busy: Boolean = false,
+        val message: UserMessage? = null,
+    )
+
+    private val local = MutableStateFlow(Local())
 
     /** Null until settings have loaded, so controls don't flash their defaults. */
     val uiState: StateFlow<SettingsUiState?> =
-        combine(repo.settings, controller.state, logBuffer.lines) { settings, connection, lines ->
+        combine(repo.settings, controller.state, logBuffer.lines, local) { settings, connection, lines, l ->
             SettingsUiState(
                 settings = settings,
                 connection = connection.label,
                 log = lines.asReversed().map { it.format() },
+                pendingImport = l.pendingImport,
+                importProblems = l.importProblems,
+                busy = l.busy,
+                message = l.message,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    // ---- Layout import and export ----
+
+    /** Reads and validates the file; nothing changes until [confirmImport]. */
+    fun importLayout(uri: Uri) = withBusy {
+        when (val result = readLayout(uri)) {
+            is LayoutTransfer.ReadResult.Ok -> local.update { it.copy(pendingImport = result.import) }
+            is LayoutTransfer.ReadResult.Failed -> local.update { it.copy(importProblems = result.problems) }
+        }
+    }
+
+    fun confirmImport() {
+        val import = local.value.pendingImport ?: return
+        local.update { it.copy(pendingImport = null) }
+        withBusy {
+            val problems = applyLayout(import)
+            if (problems.isEmpty()) show("Layout imported") else local.update { it.copy(importProblems = problems) }
+        }
+    }
+
+    fun cancelImport() = local.update { it.copy(pendingImport = null) }
+
+    fun dismissImportProblems() = local.update { it.copy(importProblems = null) }
+
+    fun exportLayout(uri: Uri, format: LayoutFormat) = withBusy {
+        show(writeLayout(uri, format) ?: "Layout exported")
+    }
+
+    fun messageShown(id: Long) = local.update { if (it.message?.id == id) it.copy(message = null) else it }
+
+    private fun show(text: String) = local.update { it.copy(message = UserMessage(text)) }
+
+    private fun withBusy(block: suspend () -> Unit) {
+        viewModelScope.launch {
+            local.update { it.copy(busy = true) }
+            try {
+                block()
+            } finally {
+                local.update { it.copy(busy = false) }
+            }
+        }
+    }
+
+    // ---- Settings ----
 
     fun setShowHoldMarkers(show: Boolean) = launch { repo.setShowHoldMarkers(show) }
     fun setShowLedPreview(show: Boolean) = launch { repo.setShowLedPreview(show) }

@@ -8,6 +8,7 @@ import android.os.Bundle
 import com.kreyenhagen.homewall.ble.BleLedController
 import com.kreyenhagen.homewall.ble.BlePermissions
 import com.kreyenhagen.homewall.data.layout.LayoutRepository
+import com.kreyenhagen.homewall.data.layout.LayoutTransfer
 import com.kreyenhagen.homewall.data.layout.layoutOrNull
 import com.kreyenhagen.homewall.data.photo.WallPhotoRepository
 import com.kreyenhagen.homewall.data.route.AppDatabase
@@ -65,6 +66,9 @@ class AppContainer(context: Context) {
     )
 
     val wallPhotoRepository = WallPhotoRepository(appContext.filesDir, appContext.contentResolver)
+
+    /** Layout import and export through the system file pickers (§12.3). */
+    val layoutTransfer = LayoutTransfer(appContext.contentResolver, layoutRepository, wallPhotoRepository)
 
     private val database = AppDatabase.create(appContext)
 

@@ -89,4 +89,27 @@ class LayoutRepositoryTest {
         assertTrue(result is LayoutRepository.UpdateResult.Rejected)
         assertEquals(broken, file.readText())
     }
+
+    @Test
+    fun replaceFixesABrokenFile() = runTest {
+        file.writeText(DOC_EXAMPLE_JSON.replace("\"leds\": [40]", "\"leds\": [7]"))
+        val repo = repo()
+        repo.load()
+        val good = (LayoutJson.parse(DOC_EXAMPLE_JSON) as LayoutJson.ParseResult.Ok).layout
+
+        assertEquals(LayoutRepository.UpdateResult.Saved, repo.replace(good))
+        assertEquals(good, repo.layout)
+        assertEquals(LayoutJson.encode(good), file.readText())
+    }
+
+    @Test
+    fun replaceRejectsAnInvalidLayout() = runTest {
+        val repo = repo()
+        repo.load()
+        val before = repo.layout
+        val result = repo.replace(before.copy(hiddenLeds = listOf(0)))
+        assertTrue(result is LayoutRepository.UpdateResult.Rejected)
+        assertEquals(before, repo.layout)
+        assertFalse(file.exists())
+    }
 }

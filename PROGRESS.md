@@ -9,7 +9,7 @@
 | M3 Routes | **Built.** `assembleDebug testDebugUnitTest` passes (131 tests). Not yet run on the AVD; see the M3 checklist below. |
 | M4 ESP32 firmware | **Built.** `firmware/home_wall/home_wall.ino` compiles with `arduino-cli` for ESP32 Dev Module at default settings on core 3.3.12 (87% of program storage) and 2.0.17 (89%), with FastLED 3.10.9 and no warnings from the sketch. Not yet uploaded; see the M4 steps below. |
 | M5 LEDs in the app | **Built.** `assembleDebug testDebugUnitTest` passes (165 tests). Not yet run on the AVD or with the ESP32; see the M5 checklist below. |
-| M6 Wall Setup mapping | Not started |
+| M6 Wall Setup mapping | **Built.** `assembleDebug testDebugUnitTest` passes (212 tests). Not yet run on the AVD or the real wall; see the M6 checklist below. |
 | M7 Polish & safety | Not started |
 
 ## Toolchain
@@ -129,9 +129,48 @@ M5 notes (consistent with the doc unless marked, listed so they are not a surpri
 - If the Nearby devices permission is denied, the snackbar has a Settings button that opens the
   app's system settings page.
 - Wall Setup keeps the last route lit for now; its own LED content (the current LED, an identified
-  hold, all holds) is M6. The LED preview is drawn on Route Display and in the editor; Wall Setup
+  hold, all holds) is M6 (now done). The LED preview is drawn on Route Display and in the editor; Wall Setup
   gets it with mapping in M6.
 - `UserMessage` moved from the editor to `ui/components`, since the Connect button uses it too.
+
+M6 notes (consistent with the doc unless marked, listed so they are not a surprise):
+- **Starting.** While the placeholder is active, Map LEDs first asks for the LED count (the
+  controller's count if connected, otherwise 550). Starting replaces the placeholder with an empty
+  layout of the same size. Routes made on the placeholder are throwaway (§6.4): their hold ids may
+  now point at real holds somewhere else.
+- **Tapping.** A tap within 3 in of a hold's marker adds the LED to that hold; anything farther
+  makes a new hold. The normal hit radius (half the hold spacing) is capped here, because early in
+  mapping the few holds are far apart and would otherwise swallow taps meant for new holds. Zoom
+  in for precise taps.
+- After every action it moves to the next LED by index (not the next unmapped one), so it follows
+  the strand. At the last LED it stays and says so.
+- Undo is on the pairing snackbar, as §12.1 says. Any other mistake is fixed with Prev and a new
+  tap, which replaces the old assignment (§12.1). Remapping an LED that was a hold on its own reuses
+  that hold's id, so routes that use it follow the corrected spot.
+- **LED count** in Map LEDs changes the count later. Lowering it unmaps the LEDs past the new
+  count, and the dialog says how many.
+- Positions are saved to 0.1 in, which keeps the JSON tidy.
+- **Review layout (my reading of "a sheet").** The hold's details and actions sit beside the wall
+  (below it in portrait) rather than in a modal bottom sheet, so the wall stays visible and you can
+  tap the next hold straight away.
+- Review → Move: drag anywhere on the wall to move the selected hold, then Save position or
+  Cancel. Remove LED is offered for holds with two or more LEDs; Delete hold asks first.
+- Review with nothing selected and Light all holds off turns the wall off. Light all holds lights
+  every hold in slot 5, and the selected hold stays bright (slot 4). Photo and Align keep the last
+  route lit.
+- **CSV import (my reading where §12.3 is silent).** The header row is required; columns are
+  found by name in any order, and `hold` is optional. Quoted cells, Windows line endings, a
+  byte-order mark and decimal commas inside quoted cells all work. Rows after the first of a
+  `hold` key may leave x/y blank (the hold uses the first row's position anyway); the first row of a
+  key must have one. Blank x/y with no key means hidden. The wall size comes from the current
+  layout, since the CSV has none. Every problem is listed with its line number (up to 50).
+- **CSV export** writes one row per mapped or hidden LED, with each hold's id as its key. Groups,
+  ring sizes and fallback ids (§6.1) aren't in the CSV, so JSON is the exact copy. A fallback-id
+  hold comes back from a CSV with its lowest LED as its id.
+- Import works even when the saved layout is broken, since importing is how to fix it. If the
+  imported wall size differs, the straightened photo is regenerated.
+- Export and import go through the system file picker (Create document / Open document).
+- No protocol or firmware changes.
 
 ## To do by hand
 
@@ -144,6 +183,8 @@ M5 notes (consistent with the doc unless marked, listed so they are not a surpri
 - [ ] Check the strand's color order when convenient (see M4 notes).
 - [ ] Run the M5 checklist: Simulated on the AVD, Bluetooth on the tablet with the ESP32.
 - [ ] Say whether connecting to the saved board at launch is what you want (see M5 notes).
+- [ ] Run the M6 checklist, then map the real wall (about 30–45 minutes) and send me or commit the exported `wall_layout.json` as `app/src/main/assets/wall_layout.json`.
+- [ ] Say whether the M6 CSV and Review choices in the M6 notes above are OK (marked "my reading").
 
 ## M1 manual test checklist (AVD)
 
@@ -262,3 +303,32 @@ Note: with the placeholder layout, hold *n* is LED *n*, so the LEDs that light a
 - [ ] Force-stop the app and reopen it: it connects to HomeWall by itself (see M5 notes).
 - [ ] Tap the green icon: a menu with "HomeWall · 550 LEDs", **Disconnect** and **Forget device**. Disconnect: the icon goes grey and the wall stays lit (firmware keeps the last frame); it doesn't reconnect on its own. Tap the icon: it connects again. Forget device: the next tap opens the picker.
 - [ ] With the board unplugged, tap Connect: after about 10 s a snackbar says it couldn't connect, with **Retry**.
+
+## M6 manual test checklist
+
+**On the AVD** (Settings → Simulated LED controller on, so the frames show under Diagnostics):
+
+- [ ] Settings → Wall Setup → **Map LEDs** shows "Map your wall" with Number of LEDs 550 ("550 is the default."). **Start mapping**: the placeholder markers disappear and the header reads "LED 0 of 550 · Not mapped yet". Diagnostics shows `TX 02 .. 03 00 00 04` (LED 0 in the white setup slot).
+- [ ] Tap the wall: a marker "0" appears there and the header moves to LED 1.
+- [ ] Tap right on marker 0: the snackbar says "LED 1 added to hold 0" with **Undo**. Undo puts you back on LED 1, and hold 0 has only LED 0 again.
+- [ ] **Hidden** moves on; **Prev** shows that LED as "Hidden". Prev to LED 0 and tap somewhere else: marker 0 moves there.
+- [ ] Type 549 in the jump field and tap Go: "LED 549 of 550", and Next is disabled. Hidden there says "That was the last LED (LED 549)."
+- [ ] Map a few more, force-stop the app, reopen Map LEDs: it resumes at the first unmapped LED.
+- [ ] **LED count** → 10: the dialog warns which LEDs lose their mapping. Cancel.
+- [ ] **Review** shows e.g. "550 LEDs · 4 holds (5 LEDs) · 2 hidden · 544 unmapped". Tapping "544 unmapped" opens Map LEDs at the first unmapped LED.
+- [ ] Tap a hold: white ring, "Hold n · LEDs … · x …, y … in (Main)", and a frame with its LEDs in slot 4. Tap empty wall: deselected, and an all-off frame is sent.
+- [ ] **Light all holds**: a frame with every hold in slot 5 (and the selected one in slot 4).
+- [ ] **Move**: drag anywhere and the marker follows; **Save position** keeps it, **Cancel** puts it back. **Remove LED** (on a paired hold) and **Delete hold** (asks first) update the summary.
+- [ ] **Export layout (JSON)** → save it → "Layout exported". Settings → Data → **Import layout** → pick that file → "Replace the wall layout?" with the same summary → Replace → "Layout imported", and Review looks the same.
+- [ ] Settings → Export layout **CSV**, then import that CSV: the same holds come back (ids of fallback holds may change; see M6 notes).
+- [ ] Import a CSV with a mistake (e.g. the same `led` twice): a dialog lists the problem with its line number, and nothing changes.
+- [ ] Rotate on Map LEDs and Review: wall on the left, controls on the right.
+
+**On the tablet with the ESP32** (photo taken and aligned as in M2):
+
+- [ ] Map LEDs → Start mapping with **550 is from the controller**. Only one LED is lit on the wall, white.
+- [ ] Tap where it shows up on the picture; it moves to the next LED and the wall follows. LEDs behind the wall → Hidden. A second LED on a big hold → tap that hold's marker.
+- [ ] Map all 550 (it can be done over several sessions). Review shows "0 unmapped".
+- [ ] **Light all holds**: every hold glows dim white on the wall. Tap any marker that looks wrong: only that hold lights brightly; fix it with Move, Remove LED or Delete hold, or remap the LED in Map LEDs.
+- [ ] Export the JSON and send it to me (or commit it as `app/src/main/assets/wall_layout.json`), so a fresh install starts with the real wall.
+- [ ] Import that same JSON: the summary and markers are identical.

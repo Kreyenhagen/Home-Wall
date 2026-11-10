@@ -60,4 +60,13 @@ class HoldHitTestTest {
         assertEquals(2, HoldHitTest.holdAt(holds, WallPoint(12f, 10f), radiusIn = 5f)?.id)
         assertEquals(1, HoldHitTest.holdAt(holds, WallPoint(11f, 10f), radiusIn = 5f)?.id)
     }
+
+    @Test
+    fun mapLedsCapsTheRadiusSoSparseHoldsDoNotSwallowTaps() {
+        // Two holds 40 in apart: half the spacing is 20 in, far too big while mapping.
+        assertEquals(20f, HoldHitTest.hitRadiusIn(40f, scalePxPerIn = 10f, minRadiusPx = 48f), 0.001f)
+        assertEquals(3f, HoldHitTest.hitRadiusIn(40f, scalePxPerIn = 10f, minRadiusPx = 48f, maxRadiusIn = 3f), 0.001f)
+        // Dense holds stay under the cap.
+        assertEquals(2f, HoldHitTest.hitRadiusIn(4f, scalePxPerIn = 100f, minRadiusPx = 48f, maxRadiusIn = 3f), 0.001f)
+    }
 }

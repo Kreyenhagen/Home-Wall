@@ -13,6 +13,7 @@ import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -24,20 +25,63 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kreyenhagen.homewall.data.layout.LayoutFormat
 import com.kreyenhagen.homewall.ui.appViewModel
+import com.kreyenhagen.homewall.ui.components.BackButton
 import com.kreyenhagen.homewall.ui.components.DriveLeds
 import com.kreyenhagen.homewall.ui.components.WallLeds
-import com.kreyenhagen.homewall.ui.components.BackButton
-import com.kreyenhagen.homewall.ui.components.StubBody
 import java.io.File
 
 @Composable
 fun WallSetupScreen(onBack: () -> Unit) {
     val vm = appViewModel { WallSetupViewModel(it.layoutRepository, it.wallPhotoRepository, it.settingsRepository) }
+    val mapVm = appViewModel {
+        MapLedsViewModel(
+            layoutRepo = it.layoutRepository,
+            photo = it.wallPhotoRepository.state,
+            settings = it.settingsRepository.settings,
+            connection = it.ledController.state,
+            sentFrame = it.ledSync.lastSent,
+        )
+    }
+    val reviewVm = appViewModel {
+        ReviewViewModel(
+            layoutRepo = it.layoutRepository,
+            photo = it.wallPhotoRepository.state,
+            settings = it.settingsRepository.settings,
+            sentFrame = it.ledSync.lastSent,
+            exportLayout = it.layoutTransfer::export,
+        )
+    }
     val state by vm.uiState.collectAsStateWithLifecycle()
-    // Map LEDs and Review light their own LEDs in M6; until then the last route stays lit (§9.2).
-    DriveLeds(WallLeds.LastRoute)
+    val mapState by mapVm.uiState.collectAsStateWithLifecycle()
+    val reviewState by reviewVm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val snackbar = remember { SnackbarHostState() }
+
+    // §9.2: Map LEDs lights the current LED, Review the identified hold or all holds. Photo and
+    // Align (and Map LEDs before mapping starts) keep the last route lit.
+    DriveLeds(
+        when (state.step) {
+            WallSetupStep.MAP_LEDS -> mapState.ledFrame?.let(WallLeds::Frame) ?: WallLeds.LastRoute
+            WallSetupStep.REVIEW -> if (reviewState.loaded) WallLeds.Frame(reviewState.ledFrame) else null
+            else -> WallLeds.LastRoute
+        },
+    )
+
+    LaunchedEffect(mapState.message) {
+        val message = mapState.message ?: return@LaunchedEffect
+        snackbar.currentSnackbarData?.dismiss()
+        val result = snackbar.showSnackbar(message.text, actionLabel = if (mapState.undo != null) "Undo" else null)
+        if (result == SnackbarResult.ActionPerformed) mapVm.undo()
+        mapVm.messageShown(message.id)
+    }
+    LaunchedEffect(reviewState.message) {
+        val message = reviewState.message ?: return@LaunchedEffect
+        snackbar.currentSnackbarData?.dismiss()
+        snackbar.showSnackbar(message.text)
+        reviewVm.messageShown(message.id)
+    }
 
     val choosePhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) vm.importPhoto(uri)
@@ -45,9 +89,13 @@ fun WallSetupScreen(onBack: () -> Unit) {
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
         if (saved) vm.importPhoto(cameraCaptureUri(context))
     }
+    val exportJson = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(LayoutFormat.JSON.mimeType)) { uri ->
+        if (uri != null) reviewVm.export(uri, LayoutFormat.JSON)
+    }
 
     WallSetupContent(
         state = state,
+        snackbarHostState = snackbar,
         onBack = onBack,
         onSelectStep = vm::selectStep,
         onMessageShown = vm::messageShown,
@@ -74,6 +122,48 @@ fun WallSetupScreen(onBack: () -> Unit) {
                 onTapEmpty = vm::tapEmpty,
             )
         },
+        mapLeds = {
+            MapLedsStep(
+                state = mapState,
+                actions = remember(mapVm) {
+                    MapLedsActions(
+                        onStartMapping = mapVm::startMapping,
+                        onChangeLedCount = mapVm::changeLedCount,
+                        onPrevious = mapVm::previous,
+                        onNext = mapVm::next,
+                        onJumpTo = mapVm::jumpTo,
+                        onHide = mapVm::hide,
+                        onTapHold = mapVm::tapHold,
+                        onTapEmpty = mapVm::tapEmpty,
+                    )
+                },
+            )
+        },
+        review = {
+            ReviewStep(
+                state = reviewState,
+                actions = remember(reviewVm, mapVm, vm) {
+                    ReviewActions(
+                        onTapHold = reviewVm::tapHold,
+                        onTapEmpty = reviewVm::tapEmpty,
+                        onLightAll = reviewVm::setLightAll,
+                        onShowUnmapped = {
+                            mapVm.goToFirstUnmapped()
+                            vm.selectStep(WallSetupStep.MAP_LEDS)
+                        },
+                        onStartMove = reviewVm::startMove,
+                        onDrag = reviewVm::dragBy,
+                        onSaveMove = reviewVm::saveMove,
+                        onCancelMove = reviewVm::cancelMove,
+                        onRemoveLed = reviewVm::removeLed,
+                        onRequestDelete = reviewVm::requestDelete,
+                        onConfirmDelete = reviewVm::confirmDelete,
+                        onDismissDelete = reviewVm::dismissDelete,
+                        onExport = { exportJson.launch(LayoutFormat.JSON.fileName) },
+                    )
+                },
+            )
+        },
     )
 }
 
@@ -81,24 +171,26 @@ fun WallSetupScreen(onBack: () -> Unit) {
 @Composable
 fun WallSetupContent(
     state: WallSetupUiState,
+    snackbarHostState: SnackbarHostState,
     onBack: () -> Unit,
     onSelectStep: (WallSetupStep) -> Unit,
     onMessageShown: () -> Unit,
     onTakePhoto: () -> Unit,
     onChoosePhoto: () -> Unit,
     alignActions: AlignActions,
+    mapLeds: @Composable () -> Unit,
+    review: @Composable () -> Unit,
 ) {
-    val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.message) {
         state.message?.let {
-            snackbar.showSnackbar(it)
+            snackbarHostState.showSnackbar(it)
             onMessageShown()
         }
     }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Wall Setup") }, navigationIcon = { BackButton(onBack) }) },
-        snackbarHost = { SnackbarHost(snackbar) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->
         Column(Modifier.padding(padding)) {
             PrimaryTabRow(selectedTabIndex = state.step.ordinal) {
@@ -109,8 +201,8 @@ fun WallSetupContent(
             when (state.step) {
                 WallSetupStep.PHOTO -> PhotoStep(state.photo, state.hasPhoto, state.working, onTakePhoto, onChoosePhoto)
                 WallSetupStep.ALIGN -> AlignStep(state, alignActions)
-                WallSetupStep.MAP_LEDS -> StubBody("Map LEDs", "Light one LED at a time and tap where it shows up. Arrives in M6.")
-                WallSetupStep.REVIEW -> StubBody("Review", "Check every hold against the real wall. Arrives in M6.")
+                WallSetupStep.MAP_LEDS -> mapLeds()
+                WallSetupStep.REVIEW -> review()
             }
         }
     }
