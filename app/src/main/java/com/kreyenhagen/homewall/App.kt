@@ -6,6 +6,8 @@ import android.content.pm.ApplicationInfo
 import com.kreyenhagen.homewall.data.layout.LayoutRepository
 import com.kreyenhagen.homewall.data.layout.layoutOrNull
 import com.kreyenhagen.homewall.data.photo.WallPhotoRepository
+import com.kreyenhagen.homewall.data.route.AppDatabase
+import com.kreyenhagen.homewall.data.route.RouteRepository
 import com.kreyenhagen.homewall.data.settings.AppSettings
 import com.kreyenhagen.homewall.data.settings.SettingsRepository
 import com.kreyenhagen.homewall.data.settings.settingsDataStore
@@ -49,6 +51,10 @@ class AppContainer(context: Context) {
     )
 
     val wallPhotoRepository = WallPhotoRepository(appContext.filesDir, appContext.contentResolver)
+
+    private val database = AppDatabase.create(appContext)
+
+    val routeRepository = RouteRepository(database.routeDao())
 
     val settingsRepository = SettingsRepository(
         dataStore = appContext.settingsDataStore,

@@ -61,6 +61,7 @@ fun HomeWallNavHost() {
     NavHost(navController = nav, startDestination = RouteList) {
         composable<RouteList> { entry ->
             RouteListScreen(
+                onOpenRoute = { id -> entry.ifResumed { nav.navigate(RouteDisplay(id)) } },
                 onCreateRoute = { entry.ifResumed { nav.navigate(RouteEditor()) } },
                 onOpenSettings = { entry.ifResumed { nav.navigate(Settings) } },
             )
@@ -71,14 +72,14 @@ fun HomeWallNavHost() {
             RouteDisplayScreen(
                 routeId = routeId,
                 onBack = { entry.ifResumed { nav.popBackStack() } },
-                onEdit = { entry.ifResumed { nav.navigate(RouteEditor(routeId)) } },
+                onEdit = { id -> entry.ifResumed { nav.navigate(RouteEditor(id)) } },
             )
         }
 
         composable<RouteEditor> { entry ->
             val dest = entry.toRoute<RouteEditor>()
             RouteEditorScreen(
-                isNew = dest.isNew,
+                routeId = dest.routeId.takeUnless { dest.isNew },
                 onBack = { entry.ifResumed { nav.popBackStack() } },
                 onSaved = { savedId ->
                     entry.ifResumed {

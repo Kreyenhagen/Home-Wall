@@ -1,6 +1,8 @@
 package com.kreyenhagen.homewall.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -49,5 +51,16 @@ fun StubBody(title: String, description: String, modifier: Modifier = Modifier) 
             textAlign = TextAlign.Center,
             modifier = Modifier.widthIn(max = 480.dp),
         )
+    }
+}
+
+/** Shown instead of the wall when `wall_layout.json` can't be used (§6.1: list every problem, never crash). */
+@Composable
+fun LayoutProblems(problems: List<String>, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+        Text("wall_layout.json has problems", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
+        Spacer(Modifier.height(8.dp))
+        if (problems.isEmpty()) Text("Loading…")
+        problems.forEach { Text("•  $it", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp)) }
     }
 }

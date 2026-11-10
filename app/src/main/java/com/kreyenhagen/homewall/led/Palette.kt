@@ -1,5 +1,8 @@
 package com.kreyenhagen.homewall.led
 
+import androidx.compose.ui.graphics.Color
+import com.kreyenhagen.homewall.domain.HoldRole
+
 /** A plain R, G, B LED color, 0–255 per channel. The app never reorders channels (§9.3). */
 data class Rgb(val r: Int, val g: Int, val b: Int) {
     init {
@@ -8,8 +11,9 @@ data class Rgb(val r: Int, val g: Int, val b: Int) {
 }
 
 /**
- * LED palette slots and their colors (§9.3). The HoldRole → (slot, ring color, LED color)
- * mapping joins this file when routes arrive (M3), so it all stays in one place.
+ * LED palette slots and their colors (§9.3), and the one place that says what each hold role looks
+ * like: its slot, its ring on screen and its LED color. Screen and LED colors are deliberately
+ * separate, because LEDs render colors differently from the screen.
  */
 object Palette {
     const val SLOT_OFF = 0
@@ -35,3 +39,23 @@ object Palette {
         return colors.mapValues { (_, c) -> Rgb(scale(c.r), scale(c.g), scale(c.b)) }
     }
 }
+
+/** The palette slot that lights this role on the wall. */
+val HoldRole.slot: Int
+    get() = when (this) {
+        HoldRole.START -> Palette.SLOT_START
+        HoldRole.MIDDLE -> Palette.SLOT_MIDDLE
+        HoldRole.FINISH -> Palette.SLOT_FINISH
+    }
+
+/** The ring color on screen. */
+val HoldRole.ringColor: Color
+    get() = when (this) {
+        HoldRole.START -> Color(0xFF00E676)
+        HoldRole.MIDDLE -> Color(0xFF2979FF)
+        HoldRole.FINISH -> Color(0xFFB040FF)
+    }
+
+/** The LED color before brightness. */
+val HoldRole.ledColor: Rgb
+    get() = Palette.defaults.getValue(slot)

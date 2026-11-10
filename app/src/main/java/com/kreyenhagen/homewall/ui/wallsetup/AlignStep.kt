@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import com.kreyenhagen.homewall.data.layout.PlaceholderLayout
 import com.kreyenhagen.homewall.data.photo.NormPoint
 import com.kreyenhagen.homewall.data.photo.PhotoAlignment
+import com.kreyenhagen.homewall.ui.components.LayoutProblems
 import com.kreyenhagen.homewall.ui.components.TabletPreviews
 import com.kreyenhagen.homewall.ui.theme.HomeWallTheme
 import com.kreyenhagen.homewall.ui.wall.WallPoint
@@ -108,16 +109,6 @@ private fun AlignWall(state: WallSetupUiState, actions: AlignActions, modifier: 
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun LayoutProblems(problems: List<String>) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        Text("wall_layout.json has problems", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
-        Spacer(Modifier.height(8.dp))
-        if (problems.isEmpty()) Text("Loading…")
-        problems.forEach { Text("•  $it", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp)) }
     }
 }
 

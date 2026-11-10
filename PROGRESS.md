@@ -6,7 +6,7 @@
 |---|---|
 | M1 Skeleton | **Built.** `assembleDebug testDebugUnitTest` passes (33 tests). The AVD check is on hold (GPU memory is busy); see the checklist below. |
 | M2 Wall view | **Built.** `assembleDebug testDebugUnitTest` passes (90 tests). Not yet run on the AVD or tablet; see the M2 checklist below. |
-| M3 Routes | Not started |
+| M3 Routes | **Built.** `assembleDebug testDebugUnitTest` passes (131 tests). Not yet run on the AVD; see the M3 checklist below. |
 | M4 ESP32 firmware | Not started |
 | M5 LEDs in the app | Not started |
 | M6 Wall Setup mapping | Not started |
@@ -27,6 +27,8 @@
 | DataStore Preferences | 1.3.0 |
 | kotlinx.serialization JSON | 1.12.0 |
 | ExifInterface | 1.4.2 |
+| Room | 2.8.5 (runtime, ktx, compiler through KSP) |
+| KSP | 2.3.13 |
 | kotlinx-coroutines-test | 1.11.0 |
 | compileSdk / targetSdk / minSdk | 37 / 37 / 33 |
 | JDK (Gradle) | Android Studio's bundled JBR 25 |
@@ -66,12 +68,27 @@ M2 notes (consistent with the doc, listed so they're not a surprise):
   when you tap an empty spot. That's how to check hit testing at every zoom level before the
   editor exists (M3).
 
+M3 notes (consistent with the doc, listed so they are not a surprise):
+- Room exports its schema to `app/schemas/` (`exportSchema = true`, §6.3). Commit those files: each
+  future migration is written against them. There is no destructive-migration fallback.
+- Not in M3, per the milestone plan: lighting the wall (Route Display, the editor draft, Lights
+  off, turning the LEDs off after a delete) is M5, and so is the Connect button. Scrolling the list
+  back to the last viewed route and Keep screen on are M7.
+- Landscape already works on the new screens (wall on the left, controls on the right); M7 polishes it.
+- Route Display keeps showing a route I opened, or edited from there, even if the filter hides it,
+  so e.g. regrading a route to Project while projects are filtered out does not make it vanish (§8.2).
+- Editing a route whose holds are partly gone from the layout says so in the editor ("1 hold no
+  longer exists. Saving removes it from the route."), as well as on Route Display (§6.3).
+- Back from the editor with changes asks "Discard this route?" for a new route, and "Discard your
+  changes?" when editing. Cancelling the Save dialog keeps what was typed for next time.
+
 ## To do by hand
 
 - [x] ~~Update Android Studio to 2026.2.2 or newer.~~ Done; the project syncs.
 - [ ] Run the M1 checklist below on the `Noah_s_Tablet` AVD once the GPU is free.
 - [ ] Run the M2 checklist: the placeholder parts on the AVD, the real-photo parts on the tablet.
 - [ ] Decide on the M2 perspective-matrix deviation above.
+- [ ] Run the M3 checklist on the AVD.
 
 ## M1 manual test checklist (AVD)
 
@@ -110,3 +127,27 @@ Run the `app` configuration on `Noah_s_Tablet`.
 - [ ] Drag the handles onto the floor line, the fold and the top corners, then **Save**. After "Straightening the photo…", the result is a flat, front-on wall: both panels look rectangular and the fold is a straight horizontal line where the dashed line sits.
 - [ ] **Adjust points** goes back to the handles at their saved positions; **Cancel** returns to the result unchanged.
 - [ ] Force-stop and reopen: Wall Setup → Align shows the straightened wall straight away.
+
+## M3 manual test checklist (AVD)
+
+Use the placeholder layout (no photo needed). Hold markers are on by default, so every hold shows its id.
+
+- [ ] Route List with no routes: "No routes yet. Tap Create to make one."
+- [ ] **Create** opens "New route": the wall with markers, and a bottom bar with Start (0/2), Middle (0), Finish (0/2), Undo and Redo (both disabled), and Save (disabled). Start is selected.
+- [ ] Tap two holds: green rings, "Start (2/2)". Tap a third: nothing changes, the snackbar says "Max 2 start holds", and the device buzzes lightly. (The emulator has no vibration, so only the snackbar shows there.)
+- [ ] Select Middle and tap a few holds (blue rings), then Finish and tap one (purple). Tap a ringed hold with any role selected: its ring goes away.
+- [ ] Undo steps back one hold change at a time and Redo steps forward. A new tap after Undo disables Redo. Switching role isn't a step.
+- [ ] Pinch-zoom (Ctrl + drag on the emulator) and pan; taps still pick the right hold. Double-tap resets.
+- [ ] Rotate the screen mid-edit: the holds and the undo history are still there, and the controls move to the right.
+- [ ] Back with holds picked asks "Discard this route?"; Cancel keeps editing.
+- [ ] **Save** opens the dialog with the name field focused and the keyboard up; Grade shows Project. Save is disabled until there's a name. Typing stops at 40 characters. Remove the finish hold first to see "This route has no finish hold. You can still save it."
+- [ ] Save goes to **Route Display**: the wall with the rings, the name, the grade and "1 / 1". Back goes to Route List, not to the editor.
+- [ ] Create about six routes with different grades, including a couple of Projects. The list shows each name (long names are cut off with "…") and its grade chip.
+- [ ] **Sort**: Grade high → low puts Projects last, and routes of the same grade newest first. Same for low → high. Newest and Oldest go by creation time.
+- [ ] **Filter**: set V2–V6 and turn off Include projects. The chip "V2–V6 · no projects" appears under the app bar; tapping it reopens the sheet. Set a range that matches nothing: "No routes match this filter" with Reset filter.
+- [ ] Tap a route: Route Display opens on it, and swiping left and right goes through the routes in the same order as the list, with "n / total" updating.
+- [ ] On Route Display, **Edit** opens the route you're looking at (not necessarily the one you tapped), with its rings. Undo is disabled. Change a hold and save with a new name: you're back on Route Display on the same route, showing the changes, and the list shows the new name.
+- [ ] With projects filtered out, edit a graded route and change it to Project: after saving it's still on screen in Route Display. Back on the list, it's hidden by the filter.
+- [ ] Edit → ⋮ → **Delete route** asks first, then goes back to Route List, and the route is gone.
+- [ ] Force-stop and reopen: routes, sort and filter are all still there.
+- [ ] Settings → Show hold markers off: Route Display and the editor show only the plain wall and rings.

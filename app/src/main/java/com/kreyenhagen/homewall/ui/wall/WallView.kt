@@ -41,6 +41,8 @@ import androidx.compose.ui.unit.sp
 import com.kreyenhagen.homewall.data.layout.Hold
 import com.kreyenhagen.homewall.data.layout.PlaceholderLayout
 import com.kreyenhagen.homewall.data.layout.WallLayout
+import com.kreyenhagen.homewall.domain.HoldRole
+import com.kreyenhagen.homewall.led.ringColor
 import com.kreyenhagen.homewall.ui.components.TabletPreviews
 import com.kreyenhagen.homewall.ui.theme.HomeWallTheme
 import kotlin.math.abs
@@ -244,7 +246,7 @@ private fun WallViewPreview() {
             layout = layout,
             image = null,
             showMarkers = true,
-            rings = mapOf(5 to Color(0xFF00E676), 60 to Color(0xFF2979FF), 61 to Color(0xFF2979FF), 148 to Color(0xFFB040FF)),
+            rings = mapOf(5 to HoldRole.START.ringColor, 60 to HoldRole.MIDDLE.ringColor, 61 to HoldRole.MIDDLE.ringColor, 148 to HoldRole.FINISH.ringColor),
         )
     }
 }
