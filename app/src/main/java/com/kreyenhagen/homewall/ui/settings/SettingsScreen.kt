@@ -38,6 +38,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
@@ -55,6 +56,7 @@ import com.kreyenhagen.homewall.ui.components.DriveLeds
 import com.kreyenhagen.homewall.ui.components.WallLeds
 import com.kreyenhagen.homewall.ui.components.BackButton
 import com.kreyenhagen.homewall.ui.components.TabletPreviews
+import com.kreyenhagen.homewall.ui.components.showBriefly
 import com.kreyenhagen.homewall.ui.theme.HomeWallTheme
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -84,10 +86,11 @@ fun SettingsScreen(onBack: () -> Unit, onOpenWallSetup: () -> Unit) {
     val state by vm.uiState.collectAsStateWithLifecycle()
     DriveLeds(WallLeds.LastRoute)
     val snackbar = remember { SnackbarHostState() }
+    val accessibility = LocalAccessibilityManager.current
 
     LaunchedEffect(state?.message) {
         val message = state?.message ?: return@LaunchedEffect
-        snackbar.showSnackbar(message.text)
+        snackbar.showBriefly(message.text, accessibility)
         vm.messageShown(message.id)
     }
 

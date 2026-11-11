@@ -289,7 +289,11 @@ A photo of this wall shows two differently skewed shapes: the vertical kicker an
 - **LED preview (debug, toggle):** small glowing dots at the holds whose LEDs are in the last frame actually sent to the controller. This lets me verify LED logic on the emulator against the rings. Shown only in Wall Setup (Map LEDs and Review). Route Display and Route Editor never show it.
 
 ### 7.4 Hit testing
-On tap: convert the point to wall coordinates, then pick the nearest hold within the hit radius. The hit radius is about half the median nearest-neighbor hold spacing on screen, minimum 24 dp. If no hold is in range, call `onTapEmpty(wallPoint)`.
+On tap: convert the point to wall coordinates, then:
+- **Route Editor:** pick the hold whose ring (§7.3) contains the point, whether or not that ring is drawn. A ring under 24 dp across either half-axis on screen counts as 24 dp for tapping. Where rings overlap, the **smaller ring wins** (by area), so a small hold stays fully tappable even inside a big one; equal rings go to the nearer center. A tap outside every ring hits nothing.
+- **Everywhere else** (Wall Setup): pick the nearest hold within the hit radius. The hit radius is about half the median nearest-neighbor hold spacing on screen, minimum 24 dp.
+
+If no hold is hit, call `onTapEmpty(wallPoint)`.
 
 ### 7.5 Zoom
 - **Route Editor and Wall Setup:** pinch to zoom 1×–5×, two-finger pan, double-tap to reset. A single tap still selects. Clamp panning so the wall can't leave the view.
@@ -763,6 +767,7 @@ Required unit tests:
 - **Rectifier:** each panel's quad corners map exactly to its band's corners.
 - **Rings:** a circle is stored as just `ringIn`; sizes and angles stay in range and round; each handle changes only its own axis, rotating follows the finger, and the center handle moves the hold (kept on the wall) without changing its ring; the handles are drawn where dragging them expects; the Rings tab saves on release and supports Make circle, Use default size and Revert.
 - **WallTransform:** wall → screen → wall round trip, with and without zoom.
+- **Hit testing:** taps hit the right hold at every zoom level. In the Route Editor, a tap anywhere inside a hold's ring hits it, rotated ovals included, matching where the ring is drawn; the smaller ring wins where rings overlap; small rings get the 24 dp minimum.
 - **LedSync:** a fast burst of frames sends only the latest after the in-flight one finishes; a new session resends; an identical frame isn't resent.
 
 Keep a short manual test checklist for each milestone in `PROGRESS.md`.
@@ -834,6 +839,8 @@ Keep a short manual test checklist for each milestone in `PROGRESS.md`.
 - The power cap is done in the firmware with a simple estimate, not FastLED's 5 V-based power model.
 - Each hold can have its own ring: an oval with its own width, height and rotation. It's set in Wall Setup → Rings with drag handles or sliders. A ring's center is its hold's position, so moving the ring in Rings moves the hold's tile, and the other way round. The Rings tab is always open, with a reminder while LEDs are still unmapped.
 - Route Display and Route Editor show no tiles and no LED preview dots, only the rings of the route's active holds. Tiles appear only in Wall Setup, so the "Show hold markers" setting was removed. Rings have no dark outline.
+- In the Route Editor, a hold's touch area is its ring, not a radius around its center. Where rings overlap, the smaller ring wins. Wall Setup still taps by nearest center.
+- Every snackbar stays up for 2 seconds, including ones with Undo, Retry or Settings, unless Android's accessibility settings ask for longer. A newer message replaces the one showing.
 
 ## 17. Open questions (ask me; don't guess)
 None right now. Add new ones here as they come up.

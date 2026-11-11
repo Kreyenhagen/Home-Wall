@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -32,12 +31,9 @@ import com.kreyenhagen.homewall.ui.appViewModel
 import com.kreyenhagen.homewall.ui.components.BackButton
 import com.kreyenhagen.homewall.ui.components.DriveLeds
 import com.kreyenhagen.homewall.ui.components.WallLeds
+import com.kreyenhagen.homewall.ui.components.showBriefly
 import com.kreyenhagen.homewall.ui.wall.HoldPressActions
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
-
-/** How long Map LEDs' Undo snackbar stays up before it goes away on its own. */
-private const val UNDO_SNACKBAR_MILLIS = 2_000L
 
 @Composable
 fun WallSetupScreen(onBack: () -> Unit) {
@@ -92,34 +88,18 @@ fun WallSetupScreen(onBack: () -> Unit) {
 
     LaunchedEffect(mapState.message) {
         val message = mapState.message ?: return@LaunchedEffect
-        snackbar.currentSnackbarData?.dismiss()
-        val result = if (mapState.undo != null) {
-            // Material keeps a snackbar with an action up until it's tapped; Undo should go away
-            // on its own. Accessibility settings can ask for longer.
-            val timeout = accessibility?.calculateRecommendedTimeoutMillis(
-                UNDO_SNACKBAR_MILLIS,
-                containsText = true,
-                containsControls = true,
-            ) ?: UNDO_SNACKBAR_MILLIS
-            withTimeoutOrNull(timeout) {
-                snackbar.showSnackbar(message.text, actionLabel = "Undo", duration = SnackbarDuration.Indefinite)
-            } ?: SnackbarResult.Dismissed
-        } else {
-            snackbar.showSnackbar(message.text)
-        }
+        val result = snackbar.showBriefly(message.text, accessibility, actionLabel = mapState.undo?.let { "Undo" })
         if (result == SnackbarResult.ActionPerformed) mapVm.undo()
         mapVm.messageShown(message.id)
     }
     LaunchedEffect(ringsState.message) {
         val message = ringsState.message ?: return@LaunchedEffect
-        snackbar.currentSnackbarData?.dismiss()
-        snackbar.showSnackbar(message.text)
+        snackbar.showBriefly(message.text, accessibility)
         ringsVm.messageShown(message.id)
     }
     LaunchedEffect(reviewState.message) {
         val message = reviewState.message ?: return@LaunchedEffect
-        snackbar.currentSnackbarData?.dismiss()
-        snackbar.showSnackbar(message.text)
+        snackbar.showBriefly(message.text, accessibility)
         reviewVm.messageShown(message.id)
     }
 
@@ -263,9 +243,10 @@ fun WallSetupContent(
     rings: @Composable () -> Unit,
     review: @Composable () -> Unit,
 ) {
+    val accessibility = LocalAccessibilityManager.current
     LaunchedEffect(state.message) {
         state.message?.let {
-            snackbarHostState.showSnackbar(it)
+            snackbarHostState.showBriefly(it, accessibility)
             onMessageShown()
         }
     }

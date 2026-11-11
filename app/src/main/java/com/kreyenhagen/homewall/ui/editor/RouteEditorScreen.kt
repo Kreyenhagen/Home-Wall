@@ -53,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
@@ -74,6 +75,7 @@ import com.kreyenhagen.homewall.ui.components.DriveLeds
 import com.kreyenhagen.homewall.ui.components.WallLeds
 import com.kreyenhagen.homewall.ui.components.LayoutProblems
 import com.kreyenhagen.homewall.ui.components.TabletPreviews
+import com.kreyenhagen.homewall.ui.components.showBriefly
 import com.kreyenhagen.homewall.ui.theme.HomeWallTheme
 import com.kreyenhagen.homewall.ui.wall.WallView
 
@@ -120,6 +122,7 @@ fun RouteEditorScreen(
     DriveLeds(state.ledFrame?.let(WallLeds::Frame))
     val snackbar = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
+    val accessibility = LocalAccessibilityManager.current
 
     // Every Back goes through the ViewModel, which asks first if there are unsaved changes.
     BackHandler(enabled = state.exit == null) { vm.onBack() }
@@ -136,8 +139,7 @@ fun RouteEditorScreen(
         val message = state.message ?: return@LaunchedEffect
         if (message.haptic) haptics.performHapticFeedback(HapticFeedbackType.Reject)
         // A newer message cancels this one and takes its place.
-        snackbar.currentSnackbarData?.dismiss()
-        snackbar.showSnackbar(message.text)
+        snackbar.showBriefly(message.text, accessibility)
         vm.messageShown(message.id)
     }
 
@@ -254,6 +256,7 @@ private fun EditorWall(state: RouteEditorUiState, layout: WallLayout, actions: E
         rings = state.rings,
         ringSizeIn = state.ringSizeIn,
         zoomEnabled = true,
+        tapInsideRings = true,
         onTapHold = actions.onTapHold,
     )
 }

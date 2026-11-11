@@ -307,6 +307,29 @@ After M7: fixes and changes from testing on the tablet.
 - **Rings have no dark outline** (you asked for this; §7.3 and §16 updated). Each ring is just
   the 3 dp colored stroke, on every screen. On a dark or busy part of the photo a ring may be
   harder to see than before.
+- **The Route Editor taps by ring** (you asked for this; §7.4, §14 and §16 updated). A tap
+  anywhere inside a hold's ring picks that hold, whether or not the ring is showing, so a big or
+  oval hold can be tapped anywhere on it instead of only near its center. A tap outside every ring
+  does nothing.
+  - **Overlapping rings: the smaller ring wins** (your choice). Every small ring stays fully
+    tappable, even one inside a big ring (e.g. a hold on a volume). Equal rings split the
+    overlap at the midpoint. On the built-in layout, 21 pairs of rings overlap, all as slivers
+    between neighbors; the biggest is 288 and 297 (about a quarter of 288's ring).
+  - A ring under 24 dp across either half-axis on screen counts as 24 dp for tapping, so small
+    rings are still easy to hit when zoomed out. At 1× in portrait that's only rings under about
+    2 in, but it affects more of them in landscape, where the wall is drawn smaller.
+  - Only the Route Editor changed (your choice). Wall Setup (the Align result, Map LEDs, Rings,
+    Review) still picks the nearest hold to the tap. Route Display has no taps on the wall.
+- **Every snackbar stays up for 2 seconds** (you asked for this; §16 updated). Before, a plain
+  message stayed 4 s, Map LEDs' Undo 2 s, and the Connect button's Retry and Settings snackbars
+  until tapped. Now they all go through one helper (`ui/components/Snackbars.kt`): the Route
+  Editor, Settings, the Connect button, and every Wall Setup step.
+  - A newer message replaces the one showing, instead of waiting for it to finish, and gets its
+    own 2 seconds. Before, some screens queued messages behind each other.
+  - Error messages also go after 2 s, e.g. "Couldn't save the route…" or a refused tile change.
+    Import problems in Settings are unaffected: they open a dialog, not a snackbar.
+  - As before for Map LEDs, Android's accessibility setting "Time to take action" can make them
+    stay longer. It's off unless you've changed it.
 
 ## To do by hand
 
@@ -518,3 +541,5 @@ Note: with the placeholder layout, hold *n* is LED *n*, so the LEDs that light a
 - [ ] **Make circle**, **Use default size** and **Revert** each do what they say. Revert after moving a ring puts it back where it was.
 - [ ] Make a route that uses an oval hold: Route Display and the editor show the oval. Export the layout as JSON and import it: the oval comes back.
 - [ ] Route Display and Create/Edit route show no tiles and no glowing LED preview dots, even with Show LED preview on: just the photo, with rings only on the route's active holds. Each ring is a plain colored line with no dark outline (the Rings tab and Review too). Tapping a hold on the photo in the editor still adds it. Settings → Display no longer has "Show hold markers". Wall Setup's Map LEDs and Review still show tiles.
+- [ ] Route Editor: tap near the edge of a big or oval hold (inside where its ring would be): it gets a ring. Tap just outside it: nothing happens. Turn on two holds whose rings overlap (e.g. 288 and 297): tapping in the overlap toggles the smaller one, and the rest of each ring toggles its own hold. Zoom in and out: a tap inside a ring still hits it, and small holds are still easy to hit when zoomed out.
+- [ ] Snackbars each go away after about 2 seconds: the editor's "Max 2 start holds", Settings → Export layout's "Layout exported", Map LEDs' pairing Undo, and the Connect button's error with **Retry** (e.g. connect with the ESP32 unplugged). Tapping Retry or Undo within the 2 seconds still works. Pair two LEDs quickly: the second message replaces the first right away.

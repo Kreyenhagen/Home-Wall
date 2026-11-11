@@ -85,6 +85,11 @@ fun WallView(
     zoomEnabled: Boolean = false,
     /** Caps the tap radius around a hold (§7.4), in inches. */
     maxHitRadiusIn: Float = Float.POSITIVE_INFINITY,
+    /**
+     * Taps hit a hold anywhere inside its ring, drawn or not, instead of near its center (the
+     * Route Editor, §7.4). Where rings overlap, the smaller ring wins.
+     */
+    tapInsideRings: Boolean = false,
     /** When set, a one-finger drag reports its movement in wall inches (Review → Move, §12.2). */
     onDrag: ((dxIn: Float, dyIn: Float) -> Unit)? = null,
     /** Press and hold a tile to drag it, or hold and let go (Map LEDs, §12.1). */
@@ -128,6 +133,7 @@ fun WallView(
     val currentOnTapEmpty by rememberUpdatedState(onTapEmpty)
     val currentOnDrag by rememberUpdatedState(onDrag)
     val currentMaxHitRadius by rememberUpdatedState(maxHitRadiusIn)
+    val currentTapInsideRings by rememberUpdatedState(tapInsideRings)
     val currentHoldPress by rememberUpdatedState(holdPress)
     val currentRingHandles by rememberUpdatedState(ringHandles)
     val currentHoldsById by rememberUpdatedState(holdsById)
@@ -140,8 +146,12 @@ fun WallView(
 
     fun Density.holdAt(position: Offset): Hold? {
         val t = currentTransform ?: return null
+        val point = t.screenToWall(position)
+        if (currentTapInsideRings) {
+            return HoldHitTest.ringAt(currentHolds, point, currentRingSize, MIN_HIT_RADIUS.toPx() / t.scale)
+        }
         val radius = HoldHitTest.hitRadiusIn(currentSpacing, t.scale, MIN_HIT_RADIUS.toPx(), currentMaxHitRadius)
-        return HoldHitTest.holdAt(currentHolds, t.screenToWall(position), radius)
+        return HoldHitTest.holdAt(currentHolds, point, radius)
     }
 
     Box(

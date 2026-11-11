@@ -38,6 +38,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,6 +59,7 @@ fun ConnectControl(snackbarHostState: SnackbarHostState) {
     }
     val state by vm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val accessibility = LocalAccessibilityManager.current
 
     var menuOpen by remember { mutableStateOf(false) }
     var showRationale by rememberSaveable { mutableStateOf(false) }
@@ -96,8 +98,7 @@ fun ConnectControl(snackbarHostState: SnackbarHostState) {
             ConnectMessage.Action.APP_SETTINGS -> "Settings"
             null -> null
         }
-        snackbarHostState.currentSnackbarData?.dismiss()
-        val result = snackbarHostState.showSnackbar(message.message.text, actionLabel = actionLabel)
+        val result = snackbarHostState.showBriefly(message.message.text, accessibility, actionLabel)
         if (result == SnackbarResult.ActionPerformed) {
             when (message.action) {
                 ConnectMessage.Action.RETRY -> onTap()
