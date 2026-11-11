@@ -74,6 +74,31 @@ fun WallLayout.withLedRemovedFromHold(holdId: Int, led: Int): WallLayout {
     return withoutLed(led)
 }
 
+/**
+ * Why a tile (hold) can't have exactly [leds], or null if it can (Map LEDs → Edit LEDs, §12.1).
+ * An LED already in another tile, or marked Hidden, is refused rather than moved.
+ */
+fun WallLayout.holdLedsProblem(holdId: Int, leds: List<Int>): String? {
+    if (holds.none { it.id == holdId }) return "That tile no longer exists."
+    if (leds.isEmpty()) return "A tile needs at least one LED. Use Delete tile to remove it."
+    leds.firstOrNull { it !in 0 until ledCount }?.let { return "There's no LED $it. LEDs go from 0 to ${ledCount - 1}." }
+    for (led in leds.distinct()) {
+        when (val a = assignmentOf(led)) {
+            is LedAssignment.InHold -> if (a.hold.id != holdId) return "LED $led is already in another tile."
+            LedAssignment.Hidden -> return "LED $led is marked Hidden. To use it, go to LED $led and tap this tile."
+            LedAssignment.Unmapped -> Unit
+        }
+    }
+    return null
+}
+
+/** Map LEDs → Edit LEDs (§12.1): the tile keeps its id and position and gets [leds]. Check [holdLedsProblem] first. */
+fun WallLayout.withHoldLeds(holdId: Int, leds: List<Int>): WallLayout =
+    copy(holds = holds.map { if (it.id == holdId) it.copy(leds = leds.distinct().sorted()) else it })
+
+/** What a tile shows (§7.3): its LED numbers, e.g. "37" or "37, 38". */
+val Hold.ledsLabel: String get() = leds.joinToString(", ")
+
 /** Review → Delete hold (§12.2): its LEDs become unmapped. */
 fun WallLayout.withoutHold(holdId: Int): WallLayout = copy(holds = holds.filterNot { it.id == holdId })
 
@@ -106,12 +131,17 @@ fun WallLayout.ledCountLossNote(count: Int): String? {
 }
 
 /**
- * Start mapping on the placeholder (§6.4): an empty real layout with the same panels, so every
- * LED starts unmapped.
+ * Start mapping on the placeholder (§6.4, §12.1): an empty real layout with the same panels. The
+ * LEDs in [hidden] that are below [ledCount] start Hidden; every other LED starts unmapped.
  */
-fun WallLayout.startedMapping(ledCount: Int): WallLayout {
+fun WallLayout.startedMapping(ledCount: Int, hidden: List<Int> = KNOWN_HIDDEN_LEDS): WallLayout {
     require(ledCount >= 1) { "ledCount must be at least 1" }
-    return copy(placeholder = false, ledCount = ledCount, holds = emptyList(), hiddenLeds = emptyList())
+    return copy(
+        placeholder = false,
+        ledCount = ledCount,
+        holds = emptyList(),
+        hiddenLeds = hidden.filter { it in 0 until ledCount }.distinct().sorted(),
+    )
 }
 
 /** The first LED that's in neither a hold nor hiddenLeds, at or after [from], or null if there is none. */

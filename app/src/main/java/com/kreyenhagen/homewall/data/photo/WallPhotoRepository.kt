@@ -222,8 +222,11 @@ class WallPhotoRepository(
 
     /** Decodes [uri] with EXIF orientation applied and the long side scaled to at most [MAX_PHOTO_SIDE]. */
     private fun decodeUpright(uri: Uri): Bitmap? {
+        // With inJustDecodeBounds, decodeStream always returns null and only fills in the size, so
+        // its result can't tell us whether the file opened; the size can.
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+        val stream = resolver.openInputStream(uri) ?: return null
+        stream.use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
         val orientation = resolver.openInputStream(uri)?.use {

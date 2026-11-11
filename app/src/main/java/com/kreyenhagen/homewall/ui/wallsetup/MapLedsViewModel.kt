@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.kreyenhagen.homewall.data.layout.Hold
 import com.kreyenhagen.homewall.data.layout.LayoutRepository
 import com.kreyenhagen.homewall.data.layout.LayoutState
 import com.kreyenhagen.homewall.data.layout.LedAssignment
@@ -11,12 +12,20 @@ import com.kreyenhagen.homewall.data.layout.MappingSummary
 import com.kreyenhagen.homewall.data.layout.WallLayout
 import com.kreyenhagen.homewall.data.layout.assignmentOf
 import com.kreyenhagen.homewall.data.layout.firstUnmappedLed
+import com.kreyenhagen.homewall.data.layout.holdLedsProblem
+import com.kreyenhagen.homewall.data.layout.knownHiddenLedsInTiles
+import com.kreyenhagen.homewall.data.layout.knownHiddenLedsToMark
 import com.kreyenhagen.homewall.data.layout.layoutOrNull
+import com.kreyenhagen.homewall.data.layout.ledRanges
 import com.kreyenhagen.homewall.data.layout.startedMapping
+import com.kreyenhagen.homewall.data.layout.withHoldLeds
+import com.kreyenhagen.homewall.data.layout.withHoldMoved
 import com.kreyenhagen.homewall.data.layout.withLedAddedToHold
 import com.kreyenhagen.homewall.data.layout.withLedCount
 import com.kreyenhagen.homewall.data.layout.withLedHidden
 import com.kreyenhagen.homewall.data.layout.withLedInNewHold
+import com.kreyenhagen.homewall.data.layout.withUnmappedLedsHidden
+import com.kreyenhagen.homewall.data.layout.withoutHold
 import com.kreyenhagen.homewall.data.photo.WallPhotoState
 import com.kreyenhagen.homewall.data.settings.AppSettings
 import com.kreyenhagen.homewall.led.ConnectionState
@@ -40,8 +49,23 @@ import kotlinx.coroutines.launch
 /** An action that can be undone from its snackbar: the layout before and after it. */
 data class MappingUndo(val before: WallLayout, val after: WallLayout, val led: Int)
 
+/** A tile that was pressed and held in Map LEDs (§12.1). While there is one, the wall lights its LEDs. */
+sealed interface TileAction {
+    val holdId: Int
+
+    /** Being dragged to ([x], [y]); saved when the finger lifts. */
+    data class Dragging(override val holdId: Int, val x: Float, val y: Float) : TileAction
+
+    /** Held and let go: its menu is open. */
+    data class Menu(override val holdId: Int) : TileAction
+
+    /** The Change LEDs dialog is open. */
+    data class EditLeds(override val holdId: Int) : TileAction
+}
+
 data class MapLedsUiState(
     val loaded: Boolean = false,
+    /** The layout as shown: a tile being dragged is drawn where it is now. */
     val layout: WallLayout? = null,
     val layoutProblems: List<String> = emptyList(),
     val image: ImageBitmap? = null,
@@ -51,15 +75,20 @@ data class MapLedsUiState(
     /** Where [suggestedLedCount] came from, e.g. "from the controller". */
     val suggestedLedCountSource: String = "",
     val current: Int = 0,
-    /** e.g. "Not mapped yet", "In hold 36 with LED 36", "Hidden". */
+    /** e.g. "Not mapped yet", "Paired with LED 36", "Hidden". */
     val status: String = "",
     val summary: MappingSummary? = null,
-    /** A white ring around the hold the current LED is in. */
+    /** A white ring around the held tile, or else around the tile the current LED is in. */
     val rings: Map<Int, Color> = emptyMap(),
     val ringSizeIn: Float = AppSettings().ringSizeIn,
     val ledPreview: Map<Int, Color> = emptyMap(),
-    /** Only the current LED, in the setup cursor slot; null until mapping has started. */
+    /** The current LED, or the held tile's LEDs, in the setup cursor slot; null until mapping has started. */
     val ledFrame: LedFrame? = null,
+    val tileAction: TileAction? = null,
+    /** The tile [tileAction] is about. */
+    val tile: Hold? = null,
+    /** How many known hidden LEDs (§12.1) are still unmapped, so they can be marked Hidden in one go. */
+    val knownHiddenToMark: Int = 0,
     val saving: Boolean = false,
     val message: UserMessage? = null,
     val undo: MappingUndo? = null,
@@ -67,11 +96,14 @@ data class MapLedsUiState(
     val ledCount: Int get() = layout?.ledCount ?: 0
     val canGoBack: Boolean get() = current > 0
     val canGoForward: Boolean get() = current < ledCount - 1
+    val menuTile: Hold? get() = tile.takeIf { tileAction is TileAction.Menu }
+    val editingTile: Hold? get() = tile.takeIf { tileAction is TileAction.EditLeds }
 }
 
 /**
  * Wall Setup → Map LEDs (§12.1): light one LED at a time and tap where it shows up. Every action
- * is saved straight away, and the step resumes at the first unmapped LED.
+ * is saved straight away, and the step resumes at the first unmapped LED. Press and hold a tile to
+ * drag it, or let go to change its LEDs or delete it.
  */
 class MapLedsViewModel(
     private val layoutRepo: LayoutRepository,
@@ -83,6 +115,7 @@ class MapLedsViewModel(
 
     private data class Local(
         val current: Int? = null,
+        val tileAction: TileAction? = null,
         val saving: Boolean = false,
         val message: UserMessage? = null,
         val undo: MappingUndo? = null,
@@ -97,14 +130,20 @@ class MapLedsViewModel(
     val uiState: StateFlow<MapLedsUiState> =
         combine(layoutRepo.state, extras, local) { layoutState, x, l ->
             if (layoutState is LayoutState.Loading) return@combine MapLedsUiState()
-            val layout = layoutState.layoutOrNull
-            val (suggested, source) = suggestedCount(layout, x.connection)
-            if (layout == null) {
+            val saved = layoutState.layoutOrNull
+            val (suggested, source) = suggestedCount(saved, x.connection)
+            if (saved == null) {
                 return@combine MapLedsUiState(loaded = true, layoutProblems = (layoutState as? LayoutState.Invalid)?.problems.orEmpty())
             }
+            // A tile deleted elsewhere (e.g. by an undo) ends whatever was happening to it.
+            val action = l.tileAction?.takeIf { a -> saved.holds.any { it.id == a.holdId } }
+            val layout = (action as? TileAction.Dragging)?.let { saved.withHoldMoved(it.holdId, it.x, it.y) } ?: saved
+            val tile = action?.let { a -> layout.holds.firstOrNull { it.id == a.holdId } }
             val current = (l.current ?: layout.firstUnmappedLed() ?: 0).coerceIn(0, layout.ledCount - 1)
             val mapping = !layout.placeholder
             val assignment = layout.assignmentOf(current)
+            val ringed = tile ?: (assignment as? LedAssignment.InHold)?.hold
+            val lit = tile?.leds ?: listOf(current)
             MapLedsUiState(
                 loaded = true,
                 layout = layout,
@@ -115,10 +154,13 @@ class MapLedsViewModel(
                 current = current,
                 status = statusOf(assignment, current),
                 summary = MappingSummary.of(layout),
-                rings = (assignment as? LedAssignment.InHold)?.let { mapOf(it.hold.id to Color.White) }.orEmpty(),
+                rings = ringed?.let { mapOf(it.id to Color.White) }.orEmpty(),
                 ringSizeIn = x.settings.ringSizeIn,
                 ledPreview = if (mapping && x.settings.showLedPreview) LedPreview.dots(x.sent, layout) else emptyMap(),
-                ledFrame = if (mapping) LedFrame(listOf(LedEntry(current, Palette.SLOT_CURSOR))) else null,
+                ledFrame = if (mapping) LedFrame(lit.sorted().map { LedEntry(it, Palette.SLOT_CURSOR) }) else null,
+                tileAction = action,
+                tile = tile,
+                knownHiddenToMark = if (mapping) saved.knownHiddenLedsToMark().size else 0,
                 saving = l.saving,
                 message = l.message,
                 undo = l.undo,
@@ -130,9 +172,10 @@ class MapLedsViewModel(
     /** Confirms the LED count and replaces the placeholder with an empty layout (§12.1). */
     fun startMapping(count: Int) {
         if (count !in 1..MAX_LED_COUNT) return show("The LED count must be between 1 and $MAX_LED_COUNT.")
-        val layout = layoutRepo.state.value.layoutOrNull ?: return
-        save(undoLed = null) { layoutRepo.replace(layout.startedMapping(count)) }
-        local.update { it.copy(current = 0) }
+        val started = layoutRepo.state.value.layoutOrNull?.startedMapping(count) ?: return
+        save(undoLed = null) { layoutRepo.replace(started) }
+        // The known hidden LEDs start Hidden, so begin at the first LED that's left to map.
+        local.update { it.copy(current = started.firstUnmappedLed() ?: 0) }
     }
 
     /** Changes the LED count later. Lowering it unmaps the LEDs past the new count. */
@@ -174,29 +217,27 @@ class MapLedsViewModel(
 
     // ---- Mapping actions (§12.1) ----
 
-    /** Tap on an empty spot: a new hold there with this LED. */
+    /** Tap on an empty spot: a new tile there with this LED. */
     fun tapEmpty(point: WallPoint) {
         val state = uiState.value
         val layout = state.layout ?: return
-        if (state.needsLedCount) return
+        if (state.needsLedCount || state.tileAction != null) return
         if (point.x !in 0f..layout.wall.widthIn || point.y !in 0f..layout.wall.heightIn) return show("Tap on the wall.")
         val led = state.current
         advanceFrom(led)
         save(undoLed = null, failedLed = led) { layoutRepo.update { it.withLedInNewHold(led, point.x, point.y) } }
     }
 
-    /** Tap on an existing hold: pair this LED with it. */
+    /** Tap on an existing tile: pair this LED with it, so they light together. */
     fun tapHold(holdId: Int) {
         val state = uiState.value
         val layout = state.layout ?: return
-        if (state.needsLedCount) return
+        if (state.needsLedCount || state.tileAction != null) return
+        val hold = layout.holds.firstOrNull { it.id == holdId } ?: return
         val led = state.current
-        if ((layout.assignmentOf(led) as? LedAssignment.InHold)?.hold?.id == holdId) {
-            advanceFrom(led)
-            return show("LED $led is already in hold $holdId.")
-        }
         advanceFrom(led)
-        save(undoLed = led, failedLed = led, message = "LED $led added to hold $holdId") {
+        if (led in hold.leds) return show("LED $led is already in that tile.")
+        save(undoLed = led, failedLed = led, message = "LED $led paired with ${ledsText(hold.leds)}") {
             layoutRepo.update { it.withLedAddedToHold(led, holdId) }
         }
     }
@@ -210,7 +251,106 @@ class MapLedsViewModel(
         save(undoLed = null, failedLed = led) { layoutRepo.update { it.withLedHidden(led) } }
     }
 
-    /** Undo from the pairing snackbar: only if nothing else has changed the layout since. */
+    /**
+     * Marks the known hidden LEDs (§12.1) that aren't mapped yet Hidden, for a layout started
+     * before the list existed. LEDs already in tiles are left alone.
+     */
+    fun markKnownHidden() {
+        val state = uiState.value
+        val layout = layoutRepo.state.value.layoutOrNull ?: return
+        if (state.needsLedCount) return
+        val leds = layout.knownHiddenLedsToMark()
+        if (leds.isEmpty()) return
+        val inTiles = layout.knownHiddenLedsInTiles()
+        val marked = if (leds.size == 1) "Marked LED ${leds.single()} Hidden" else "Marked ${leds.size} LEDs Hidden"
+        val leftAlone = when (inTiles.size) {
+            0 -> ""
+            1 -> ". LED ${inTiles.single()} is in a tile, so it wasn't changed."
+            else -> ". LEDs ${ledRanges(inTiles)} are in tiles, so they weren't changed."
+        }
+        save(undoLed = state.current, message = marked + leftAlone) { layoutRepo.update { it.withUnmappedLedsHidden(leds) } }
+        if (state.current in leds) {
+            // Don't sit on an LED that's now Hidden: carry on at the next one to map.
+            val after = layout.withUnmappedLedsHidden(leds)
+            local.update { it.copy(current = after.firstUnmappedLed(state.current) ?: after.firstUnmappedLed() ?: state.current) }
+        }
+    }
+
+    // ---- Press and hold a tile (§12.1) ----
+
+    /** A tile was pressed and held: the wall lights its LEDs, and dragging may follow. */
+    fun pressTile(holdId: Int) {
+        val hold = savedHold(holdId) ?: return
+        local.update { it.copy(tileAction = TileAction.Dragging(hold.id, hold.x, hold.y)) }
+    }
+
+    fun dragTile(dxIn: Float, dyIn: Float) {
+        val wall = layoutRepo.state.value.layoutOrNull?.wall ?: return
+        local.update { l ->
+            val drag = l.tileAction as? TileAction.Dragging ?: return@update l
+            l.copy(tileAction = drag.copy(x = (drag.x + dxIn).coerceIn(0f, wall.widthIn), y = (drag.y + dyIn).coerceIn(0f, wall.heightIn)))
+        }
+    }
+
+    /** The finger lifted after dragging: save the tile's new spot. */
+    fun endTileDrag() {
+        val drag = local.value.tileAction as? TileAction.Dragging ?: return
+        // The tile stays drawn where it was dropped until the save lands, so it doesn't jump back.
+        save(undoLed = null, endsTileAction = drag) { layoutRepo.update { it.withHoldMoved(drag.holdId, drag.x, drag.y) } }
+    }
+
+    /** Held and let go without dragging: open the tile's menu. */
+    fun releaseTile(holdId: Int) {
+        if (savedHold(holdId) == null) return
+        local.update { it.copy(tileAction = TileAction.Menu(holdId)) }
+    }
+
+    /** The menu or dialog was dismissed, or the drag was interrupted: nothing changes. */
+    fun closeTile() = local.update { it.copy(tileAction = null) }
+
+    fun editTileLeds() = local.update { l ->
+        val menu = l.tileAction as? TileAction.Menu ?: return@update l
+        l.copy(tileAction = TileAction.EditLeds(menu.holdId))
+    }
+
+    /** What's wrong with [text] as the edited tile's LEDs, shown under the field; null if it can be saved. */
+    fun tileLedsProblem(text: String): String? {
+        val holdId = local.value.tileAction?.holdId ?: return null
+        val layout = layoutRepo.state.value.layoutOrNull ?: return null
+        return tileLedsProblem(layout, holdId, text)
+    }
+
+    /**
+     * Change LEDs: the tile keeps its spot and gets the LEDs in [text]. An LED that's already in
+     * another tile, or Hidden, is refused.
+     */
+    fun saveTileLeds(text: String) {
+        val action = local.value.tileAction as? TileAction.EditLeds ?: return
+        val layout = layoutRepo.state.value.layoutOrNull ?: return
+        tileLedsProblem(layout, action.holdId, text)?.let { return show(it) }
+        val leds = parseLeds(text)?.distinct()?.sorted() ?: return
+        local.update { it.copy(tileAction = null) }
+        if (leds == savedHold(action.holdId)?.leds) return
+        save(undoLed = uiState.value.current, message = "Tile changed to ${ledsText(leds)}") {
+            layoutRepo.update { it.withHoldLeds(action.holdId, leds) }
+        }
+    }
+
+    /** Delete tile: its LEDs become unmapped. */
+    fun deleteTile() {
+        val action = local.value.tileAction as? TileAction.Menu ?: return
+        val hold = savedHold(action.holdId) ?: return
+        local.update { it.copy(tileAction = null) }
+        save(undoLed = uiState.value.current, message = "Deleted the tile with ${ledsText(hold.leds)}") {
+            layoutRepo.update { it.withoutHold(hold.id) }
+        }
+    }
+
+    private fun savedHold(holdId: Int): Hold? = layoutRepo.state.value.layoutOrNull?.holds?.firstOrNull { it.id == holdId }
+
+    // ---- Undo and messages ----
+
+    /** Undo from the snackbar: only if nothing else has changed the layout since. */
     fun undo() {
         val undo = local.value.undo ?: return
         local.update { it.copy(undo = null) }
@@ -223,27 +363,40 @@ class MapLedsViewModel(
         if (it.message?.id == id) it.copy(message = null, undo = null) else it
     }
 
-    /** Moves on after an action; at the last LED it stays and says so. */
+    /**
+     * Moves on after an action to the next LED that isn't Hidden (§12.1), so LEDs behind the wall
+     * are skipped. Prev and Next still stop on every LED. At the end it stays and says so.
+     */
     private fun advanceFrom(led: Int) {
-        val count = uiState.value.ledCount
-        if (led >= count - 1) {
-            show("That was the last LED (LED $led).")
-        } else {
-            local.update { if ((it.current ?: led) == led) it.copy(current = led + 1) else it }
+        val layout = uiState.value.layout ?: return
+        val hidden = layout.hiddenLeds.toHashSet()
+        val next = (led + 1 until layout.ledCount).firstOrNull { it !in hidden }
+        when {
+            next != null -> local.update { if ((it.current ?: led) == led) it.copy(current = next) else it }
+            led >= layout.ledCount - 1 -> show("That was the last LED (LED $led).")
+            else -> show("That was the last LED to map. The LEDs after LED $led are Hidden.")
         }
     }
 
+    /**
+     * Runs [change]. A [message] is shown once it has saved, with Undo if [undoLed] is set (the LED
+     * to go back to). [endsTileAction] is cleared once the save is done, unless something else
+     * has replaced it by then.
+     */
     private fun save(
         undoLed: Int?,
         failedLed: Int? = null,
         message: String? = null,
+        endsTileAction: TileAction? = null,
         change: suspend () -> LayoutRepository.UpdateResult,
     ) {
         val before = layoutRepo.state.value.layoutOrNull
         local.update { it.copy(saving = true) }
         viewModelScope.launch {
             val result = change()
-            local.update { it.copy(saving = false) }
+            local.update { l ->
+                l.copy(saving = false, tileAction = if (endsTileAction != null && l.tileAction == endsTileAction) null else l.tileAction)
+            }
             when (result) {
                 is LayoutRepository.UpdateResult.Rejected -> {
                     // Go back to the LED that didn't save, so it isn't skipped.
@@ -284,12 +437,22 @@ class MapLedsViewModel(
             LedAssignment.Hidden -> "Hidden"
             is LedAssignment.InHold -> {
                 val others = assignment.hold.leds - led
-                "In hold ${assignment.hold.id}" + when (others.size) {
-                    0 -> ""
-                    1 -> " with LED ${others.first()}"
-                    else -> " with LEDs ${others.joinToString(", ")}"
-                }
+                if (others.isEmpty()) "Placed" else "Paired with ${ledsText(others)}"
             }
+        }
+
+        /** "LED 37" or "LEDs 37, 38". */
+        fun ledsText(leds: List<Int>): String = (if (leds.size == 1) "LED " else "LEDs ") + leds.joinToString(", ")
+
+        /** LED numbers separated by commas or spaces, e.g. "37, 38"; null if any part isn't a number. */
+        fun parseLeds(text: String): List<Int>? {
+            val parts = text.split(',', ' ', ';').filter { it.isNotBlank() }
+            return parts.map { it.trim().toIntOrNull() ?: return null }
+        }
+
+        fun tileLedsProblem(layout: WallLayout, holdId: Int, text: String): String? {
+            val leds = parseLeds(text) ?: return "Enter LED numbers separated by commas, e.g. 37, 38."
+            return layout.holdLedsProblem(holdId, leds)
         }
     }
 }

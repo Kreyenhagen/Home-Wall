@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -22,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -30,7 +32,12 @@ import com.kreyenhagen.homewall.ui.appViewModel
 import com.kreyenhagen.homewall.ui.components.BackButton
 import com.kreyenhagen.homewall.ui.components.DriveLeds
 import com.kreyenhagen.homewall.ui.components.WallLeds
+import com.kreyenhagen.homewall.ui.wall.HoldPressActions
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+
+/** How long Map LEDs' Undo snackbar stays up before it goes away on its own. */
+private const val UNDO_SNACKBAR_MILLIS = 2_000L
 
 @Composable
 fun WallSetupScreen(onBack: () -> Unit) {
@@ -57,6 +64,7 @@ fun WallSetupScreen(onBack: () -> Unit) {
     val mapState by mapVm.uiState.collectAsStateWithLifecycle()
     val reviewState by reviewVm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val accessibility = LocalAccessibilityManager.current
     val snackbar = remember { SnackbarHostState() }
 
     // §9.2: Map LEDs lights the current LED, Review the identified hold or all holds. Photo and
@@ -72,7 +80,20 @@ fun WallSetupScreen(onBack: () -> Unit) {
     LaunchedEffect(mapState.message) {
         val message = mapState.message ?: return@LaunchedEffect
         snackbar.currentSnackbarData?.dismiss()
-        val result = snackbar.showSnackbar(message.text, actionLabel = if (mapState.undo != null) "Undo" else null)
+        val result = if (mapState.undo != null) {
+            // Material keeps a snackbar with an action up until it's tapped; Undo should go away
+            // on its own. Accessibility settings can ask for longer.
+            val timeout = accessibility?.calculateRecommendedTimeoutMillis(
+                UNDO_SNACKBAR_MILLIS,
+                containsText = true,
+                containsControls = true,
+            ) ?: UNDO_SNACKBAR_MILLIS
+            withTimeoutOrNull(timeout) {
+                snackbar.showSnackbar(message.text, actionLabel = "Undo", duration = SnackbarDuration.Indefinite)
+            } ?: SnackbarResult.Dismissed
+        } else {
+            snackbar.showSnackbar(message.text)
+        }
         if (result == SnackbarResult.ActionPerformed) mapVm.undo()
         mapVm.messageShown(message.id)
     }
@@ -133,8 +154,21 @@ fun WallSetupScreen(onBack: () -> Unit) {
                         onNext = mapVm::next,
                         onJumpTo = mapVm::jumpTo,
                         onHide = mapVm::hide,
+                        onMarkKnownHidden = mapVm::markKnownHidden,
                         onTapHold = mapVm::tapHold,
                         onTapEmpty = mapVm::tapEmpty,
+                        tilePress = HoldPressActions(
+                            onPressed = mapVm::pressTile,
+                            onDrag = mapVm::dragTile,
+                            onDragEnd = mapVm::endTileDrag,
+                            onReleased = mapVm::releaseTile,
+                            onCancel = mapVm::closeTile,
+                        ),
+                        onCloseTile = mapVm::closeTile,
+                        onEditTileLeds = mapVm::editTileLeds,
+                        onDeleteTile = mapVm::deleteTile,
+                        tileLedsProblem = mapVm::tileLedsProblem,
+                        onSaveTileLeds = mapVm::saveTileLeds,
                     )
                 },
             )

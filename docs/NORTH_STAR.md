@@ -43,7 +43,7 @@ Accounts or cloud sync, climb logging or ratings, any Kilter database or Kilter-
 |---|---|
 | Wall | 8 ft (96 in) wide. Two flat, full-width panels: a **kicker** about 15 in tall at the bottom, and the **main panel** above it, overhanging at **30°**. |
 | Panel heights | Measured along each panel's surface (§5). Kicker: about 15 in. Main panel: about 99 in (9.5 ft along the surface, minus the kicker). Both are rough measurements, accurate to about ±3 in, and can be refined at any time (§6.1). |
-| LEDs | **550** WS2811 pixels, color order **RBG**, on one data line, driven by an **ESP32 Dev Module** running FastLED (§11.6). Some pixels sit behind the wall (wire-length constraints) and must always stay off. Some holds are covered by more than one pixel. |
+| LEDs | **550** WS2811 pixels, color order **RBG**, on one data line, driven by an **ESP32 Dev Module** running FastLED (§11.6). Some pixels sit behind the wall (wire-length constraints) and must always stay off; the list is in §12.1. Some holds are covered by more than one pixel. |
 | Power & wiring | 24 V LEDs on an 8.33 A (200 W) supply. LED data line on ESP32 **GPIO 16**. All 550 LEDs have been tested and work with FastLED. |
 | LED index | 0-based position along the data line, starting at the pixel nearest the ESP32. The app always shows indices 0-based. |
 | Link | BLE. The app is the GATT client (central). The ESP32 is the GATT server (peripheral). |
@@ -277,7 +277,7 @@ A photo of this wall shows two differently skewed shapes: the vertical kicker an
 - **Rings:** a stroked circle centered on the hold.
     - Radius = `(hold.ringIn ?: settings.ringSize) × scale`, minimum 12 dp.
     - 3 dp stroke in the role color, with a thin dark outer stroke so rings stand out on any photo. No fill.
-- **Hold markers (debug tiles, toggle):** a small translucent square at each hold with its id, colored by `group`. Hidden LEDs are not drawn. The fold line is drawn too. I'll turn these off once I trust the mapping.
+- **Hold markers (debug tiles, toggle):** a small translucent square at each hold labeled with its LED numbers (e.g. "37, 38" for a paired hold), colored by `group`. Hidden LEDs are not drawn. The fold line is drawn too. I'll turn these off once I trust the mapping.
 - **LED preview (debug, toggle):** small glowing dots at the holds whose LEDs are in the last frame actually sent to the controller. This lets me verify LED logic on the emulator against the rings.
 
 ### 7.4 Hit testing
@@ -666,14 +666,24 @@ A spreadsheet isn't the primary method because off-by-one errors in the wiring o
 
 ### 12.1 Map LEDs step
 - First, confirm the total LED count. Default 550, or the value from INFO if connected.
-- Header: "LED 37 of 550", with Prev/Next and a jump-to-index field. The step resumes at the first unmapped LED.
-- The wall lights **only the current LED** (slot 4).
+- **Known hidden LEDs.** I've already found the LEDs behind the wall: **0–40, 45, 54, 59, 64, 69, 74, 79, 84–86, 93, 106, 113, 120, 127, 134, 141, 148, 155, 162, 169, 200, 231, 262, 293, 325, 356, 371, 388, 420, 452, 484, 485, 517** (75 LEDs).
+    - Starting to map puts them in `hiddenLeds` (those below the LED count).
+    - After that they're ordinary Hidden LEDs, so any of them can be changed like any other LED: go to it and tap where it lights up, or tap a tile to pair it.
+    - If some of them are unmapped (e.g. a layout started before this list), Map LEDs shows a "Mark Hidden" button that marks them all in one tap, with Undo. LEDs on the list that are already in tiles are left alone, and the snackbar names them.
+- Header: "LED 37 of 0–549" (LEDs are numbered from 0, so it shows the last index, not the count), with Prev/Next and a jump-to-index field. The step resumes at the first unmapped LED.
+- **Auto-advance** goes to the next LED that isn't Hidden, so LEDs behind the wall are skipped. Prev, Next and the jump field still stop on every LED.
+- The wall lights **only the current LED** (slot 4), except while a tile is held (below).
 - Actions:
     - **Tap an empty spot** on the image: create a new hold there containing this LED, then auto-advance.
-    - **Tap an existing hold:** add this LED to that hold (pairing), then auto-advance. Show a snackbar: "LED 37 added to hold 36 · Undo".
+    - **Tap an existing hold:** add this LED to that hold (pairing), then auto-advance. Show a snackbar: "LED 37 paired with LED 36 · Undo".
     - **Hidden** button: add the LED to `hiddenLeds`, then auto-advance.
+- **Press and hold a tile** (a hold's marker). The wall lights that tile's LEDs (slot 4) instead of the current LED, with a light haptic.
+    - **Drag** it to move the tile. It's saved when I lift my finger.
+    - **Let go** without dragging to open a menu on the tile:
+        - **Change LED number(s):** edit the tile's LEDs as a comma-separated list. The tile keeps its id and position. An LED that's already in another tile, or Hidden, is refused with a message; nothing is moved or swapped. Snackbar with Undo.
+        - **Delete tile:** its LEDs become unmapped. Snackbar with Undo. The current LED doesn't change.
 - Redoing an already-mapped LED replaces its old assignment. Remove it from its previous hold, and delete that hold if it's left with no LEDs.
-- Zoom is available for precise taps. Existing holds are drawn as markers with their ids.
+- Zoom is available for precise taps. Existing holds are drawn as tiles labeled with their LED numbers (§7.3).
 - Every action saves immediately (atomic write).
 
 ### 12.2 Review step
@@ -780,6 +790,8 @@ Keep a short manual test checklist for each milestone in `PROGRESS.md`.
 - BLE uses write-with-response plus latest-wins conflation. Colors are palette slots, and brightness is applied app-side.
 - The firmware keeps the last frame lit when the app disconnects.
 - In-app light-and-tap mapping is the primary way to build the layout. CSV and JSON are the alternatives.
+- In Map LEDs, pressing and holding a tile drags it; letting go opens a menu to change its LED numbers or delete it. Changing to an LED that is already placed or Hidden is refused.
+- The LEDs known to be behind the wall (§12.1) start Hidden when mapping starts, and auto-advance skips Hidden LEDs. They stay editable like any other LED.
 - Manual DI and the platform BLE API. No Hilt and no BLE library.
 - The firmware is one self-contained Arduino sketch (`firmware/home_wall/home_wall.ino`) that I copy, paste and upload. Its only extra library is FastLED; BLE uses the library bundled with the ESP32 board package. It's written in its own milestone (M4).
 - The power cap is done in the firmware with a simple estimate, not FastLED's 5 V-based power model.

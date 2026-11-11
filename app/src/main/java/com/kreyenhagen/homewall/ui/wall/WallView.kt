@@ -8,7 +8,10 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -29,13 +32,18 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -43,20 +51,23 @@ import androidx.compose.ui.unit.sp
 import com.kreyenhagen.homewall.data.layout.Hold
 import com.kreyenhagen.homewall.data.layout.PlaceholderLayout
 import com.kreyenhagen.homewall.data.layout.WallLayout
+import com.kreyenhagen.homewall.data.layout.ledsLabel
 import com.kreyenhagen.homewall.domain.HoldRole
 import com.kreyenhagen.homewall.led.ringColor
 import com.kreyenhagen.homewall.ui.components.TabletPreviews
 import com.kreyenhagen.homewall.ui.theme.HomeWallTheme
+import kotlinx.coroutines.CancellationException
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
  * The wall with its overlays (§7.2–§7.5), shared by Route Display, Route Editor and Wall Setup.
  *
- * Shows the straightened [image] (or a plain wall-colored rectangle without one), debug markers,
- * a ring around each hold in [rings], and the LED preview dots. With [zoomEnabled]: pinch to zoom
- * 1×–5×, two-finger pan,
- * and double-tap to reset; a single tap still selects.
+ * Shows the straightened [image] (or a plain wall-colored rectangle without one), debug markers
+ * (tiles, each labeled with its LED numbers), a ring around each hold in [rings], and the LED
+ * preview dots. With [zoomEnabled]: pinch to zoom 1×–5×, two-finger pan, and double-tap to reset;
+ * a single tap still selects. [popup] is shown anchored to the tile [popupHoldId], e.g. a menu.
  */
 @Composable
 fun WallView(
@@ -74,6 +85,10 @@ fun WallView(
     maxHitRadiusIn: Float = Float.POSITIVE_INFINITY,
     /** When set, a one-finger drag reports its movement in wall inches (Review → Move, §12.2). */
     onDrag: ((dxIn: Float, dyIn: Float) -> Unit)? = null,
+    /** Press and hold a tile to drag it, or hold and let go (Map LEDs, §12.1). */
+    holdPress: HoldPressActions? = null,
+    popupHoldId: Int? = null,
+    popup: @Composable () -> Unit = {},
     onTapHold: ((holdId: Int) -> Unit)? = null,
     onTapEmpty: ((WallPoint) -> Unit)? = null,
 ) {
@@ -92,9 +107,11 @@ fun WallView(
     val medianSpacingIn = remember(layout.holds) { HoldHitTest.medianNearestNeighborIn(layout.holds) }
 
     val textMeasurer = rememberTextMeasurer(cacheSize = 0)
-    val labels: Map<Int, TextLayoutResult> = remember(layout.holds, showMarkers, showLabels, textMeasurer) {
+    // Keyed on ids and LEDs only, so dragging a tile doesn't measure every label again.
+    val labelKeys = layout.holds.map { it.id to it.leds }
+    val labels: Map<Int, TextLayoutResult> = remember(labelKeys, showMarkers, showLabels, textMeasurer) {
         if (showMarkers && showLabels) {
-            layout.holds.associate { it.id to textMeasurer.measure(it.id.toString(), LABEL_STYLE) }
+            layout.holds.associate { it.id to textMeasurer.measure(it.ledsLabel, LABEL_STYLE) }
         } else {
             emptyMap()
         }
@@ -107,81 +124,207 @@ fun WallView(
     val currentOnTapEmpty by rememberUpdatedState(onTapEmpty)
     val currentOnDrag by rememberUpdatedState(onDrag)
     val currentMaxHitRadius by rememberUpdatedState(maxHitRadiusIn)
+    val currentHoldPress by rememberUpdatedState(holdPress)
+    val haptics = LocalHapticFeedback.current
     val zoomedIn = zoomPan.zoom > 1f
 
-    Canvas(
-        modifier = modifier
+    /** A press-and-hold just took this gesture, so the tap detector mustn't also count it as a tap. */
+    val tapTaken = remember { BooleanFlag() }
+
+    fun Density.holdAt(position: Offset): Hold? {
+        val t = currentTransform ?: return null
+        val radius = HoldHitTest.hitRadiusIn(currentSpacing, t.scale, MIN_HIT_RADIUS.toPx(), currentMaxHitRadius)
+        return HoldHitTest.holdAt(currentHolds, t.screenToWall(position), radius)
+    }
+
+    Box(
+        modifier
             .fillMaxSize()
             .clipToBounds()
-            .onSizeChanged { viewSize = it }
-            // Double-tap only exists while zoomed in, so plain taps aren't delayed at 1×.
-            .pointerInput(zoomEnabled && zoomedIn) {
-                detectTapGestures(
-                    onDoubleTap = if (zoomEnabled && zoomedIn) {
-                        { zoomPan.reset() }
-                    } else {
-                        null
-                    },
-                    onTap = { position ->
-                        val t = currentTransform ?: return@detectTapGestures
-                        val point = t.screenToWall(position)
-                        val radius = HoldHitTest.hitRadiusIn(currentSpacing, t.scale, MIN_HIT_RADIUS.toPx(), currentMaxHitRadius)
-                        val hold = HoldHitTest.holdAt(currentHolds, point, radius)
-                        if (hold != null) currentOnTapHold?.invoke(hold.id) else currentOnTapEmpty?.invoke(point)
-                    },
-                )
-            }
-            .pointerInput(onDrag != null) {
-                if (onDrag == null) return@pointerInput
-                detectDragGestures { change, _ ->
-                    val t = currentTransform ?: return@detectDragGestures
-                    val from = t.screenToWall(change.previousPosition)
-                    val to = t.screenToWall(change.position)
-                    change.consume()
-                    currentOnDrag?.invoke(to.x - from.x, to.y - from.y)
-                }
-            }
-            .pointerInput(zoomEnabled) {
-                if (!zoomEnabled) return@pointerInput
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    do {
-                        val event = awaitPointerEvent()
-                        if (event.changes.count { it.pressed } >= 2) {
-                            currentTransform?.let { t ->
-                                val next = t.transformedBy(
-                                    centroid = event.calculateCentroid(useCurrent = true),
-                                    zoomChange = event.calculateZoom(),
-                                    panChange = event.calculatePan(),
-                                )
-                                zoomPan.zoom = next.zoom
-                                zoomPan.pan = next.pan
-                            }
-                            // Consuming cancels the tap detector, so a pinch never selects a hold.
-                            event.changes.forEach { it.consume() }
-                        }
-                    } while (event.changes.any { it.pressed })
-                }
-            },
+            .onSizeChanged { viewSize = it },
     ) {
-        val t = transform ?: return@Canvas
-        val rect = t.wallRect
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                // Double-tap only exists while zoomed in, so plain taps aren't delayed at 1×.
+                .pointerInput(zoomEnabled && zoomedIn) {
+                    detectTapGestures(
+                        onDoubleTap = if (zoomEnabled && zoomedIn) {
+                            { zoomPan.reset() }
+                        } else {
+                            null
+                        },
+                        onTap = { position ->
+                            if (tapTaken.value) {
+                                tapTaken.value = false
+                                return@detectTapGestures
+                            }
+                            val t = currentTransform ?: return@detectTapGestures
+                            val hold = holdAt(position)
+                            if (hold != null) currentOnTapHold?.invoke(hold.id) else currentOnTapEmpty?.invoke(t.screenToWall(position))
+                        },
+                    )
+                }
+                // Later in the chain than the tap detector, so it sees each event first and the up it
+                // consumes cancels the tap.
+                .pointerInput(holdPress != null) {
+                    if (holdPress == null) return@pointerInput
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        tapTaken.value = false
+                        val hold = holdAt(down.position) ?: return@awaitEachGesture
+                        if (!awaitStillPress(down)) return@awaitEachGesture
 
-        if (image != null) {
-            drawImage(
-                image = image,
-                dstOffset = IntOffset(rect.left.roundToInt(), rect.top.roundToInt()),
-                dstSize = IntSize(rect.width.roundToInt(), rect.height.roundToInt()),
-                filterQuality = FilterQuality.Medium,
-            )
-        } else {
-            drawRect(WallColors.PlainWall, topLeft = rect.topLeft, size = rect.size)
+                        tapTaken.value = true
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        val actions = currentHoldPress ?: return@awaitEachGesture
+                        actions.onPressed(hold.id)
+                        try {
+                            trackHeldTile(down, actions, viewConfiguration.touchSlop, { currentTransform }, hold.id)
+                        } catch (e: CancellationException) {
+                            actions.onCancel()
+                            throw e
+                        }
+                    }
+                }
+                .pointerInput(onDrag != null) {
+                    if (onDrag == null) return@pointerInput
+                    detectDragGestures { change, _ ->
+                        val t = currentTransform ?: return@detectDragGestures
+                        val from = t.screenToWall(change.previousPosition)
+                        val to = t.screenToWall(change.position)
+                        change.consume()
+                        currentOnDrag?.invoke(to.x - from.x, to.y - from.y)
+                    }
+                }
+                .pointerInput(zoomEnabled) {
+                    if (!zoomEnabled) return@pointerInput
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        do {
+                            val event = awaitPointerEvent()
+                            if (event.changes.count { it.pressed } >= 2) {
+                                currentTransform?.let { t ->
+                                    val next = t.transformedBy(
+                                        centroid = event.calculateCentroid(useCurrent = true),
+                                        zoomChange = event.calculateZoom(),
+                                        panChange = event.calculatePan(),
+                                    )
+                                    zoomPan.zoom = next.zoom
+                                    zoomPan.pan = next.pan
+                                }
+                                // Consuming cancels the tap detector, so a pinch never selects a hold.
+                                event.changes.forEach { it.consume() }
+                            }
+                        } while (event.changes.any { it.pressed })
+                    }
+                },
+        ) {
+            val t = transform ?: return@Canvas
+            val rect = t.wallRect
+
+            if (image != null) {
+                drawImage(
+                    image = image,
+                    dstOffset = IntOffset(rect.left.roundToInt(), rect.top.roundToInt()),
+                    dstSize = IntSize(rect.width.roundToInt(), rect.height.roundToInt()),
+                    filterQuality = FilterQuality.Medium,
+                )
+            } else {
+                drawRect(WallColors.PlainWall, topLeft = rect.topLeft, size = rect.size)
+            }
+
+            if (image == null || showMarkers) drawFolds(layout, t, strong = showMarkers)
+            if (showMarkers) drawMarkers(layout.holds, labels, t)
+            drawRings(rings, holdsById, ringSizeIn, t)
+            drawLedPreview(ledPreview, holdsById, t)
         }
 
-        if (image == null || showMarkers) drawFolds(layout, t, strong = showMarkers)
-        if (showMarkers) drawMarkers(layout.holds, labels, t)
-        drawRings(rings, holdsById, ringSizeIn, t)
-        drawLedPreview(ledPreview, holdsById, t)
+        // An anchor spanning the tile's height, so a menu opens just below (or above) the tile.
+        val anchor = popupHoldId?.let(holdsById::get)
+        if (anchor != null && transform != null) {
+            val center = transform.wallToScreen(anchor.x, anchor.y)
+            Box(
+                Modifier
+                    .offset { IntOffset(center.x.roundToInt(), (center.y - MARKER_SIZE.toPx() / 2f).roundToInt()) }
+                    .size(1.dp, MARKER_SIZE),
+            ) { popup() }
+        }
+    }
+}
+
+/**
+ * Press and hold a tile (Map LEDs, §12.1). [onPressed] fires once the press has been held still
+ * long enough. Dragging then moves the tile: [onDrag] with the movement in wall inches, then
+ * [onDragEnd]. Letting go without dragging calls [onReleased] instead, e.g. to open a menu.
+ * [onCancel] means the gesture ended some other way, such as a second finger starting a pinch.
+ */
+class HoldPressActions(
+    val onPressed: (holdId: Int) -> Unit,
+    val onDrag: (dxIn: Float, dyIn: Float) -> Unit,
+    val onDragEnd: () -> Unit,
+    val onReleased: (holdId: Int) -> Unit,
+    val onCancel: () -> Unit,
+)
+
+/** A plain flag shared by two gesture handlers; nothing draws from it. */
+private class BooleanFlag(var value: Boolean = false)
+
+/**
+ * Waits out the long-press timeout. True if [down] was still held there without moving more than
+ * the touch slop, and no second finger or other handler took the gesture.
+ */
+private suspend fun AwaitPointerEventScope.awaitStillPress(down: PointerInputChange): Boolean {
+    val slop = viewConfiguration.touchSlop
+    val ended = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == down.id }
+            if (change == null || !change.pressed || change.isConsumed) break
+            if (event.changes.count { it.pressed } > 1) break
+            if ((change.position - down.position).getDistance() > slop) break
+        }
+        true
+    }
+    return ended == null
+}
+
+/** After the long press: drag the tile until the finger lifts. Every event is consumed. */
+private suspend fun AwaitPointerEventScope.trackHeldTile(
+    down: PointerInputChange,
+    actions: HoldPressActions,
+    slop: Float,
+    transform: () -> WallTransform?,
+    holdId: Int,
+) {
+    var dragging = false
+    while (true) {
+        val event = awaitPointerEvent()
+        val change = event.changes.firstOrNull { it.id == down.id }
+        if (change == null || change.isConsumed || event.changes.count { it.pressed } > 1) {
+            actions.onCancel()
+            return
+        }
+        if (!change.pressed) {
+            change.consume()
+            if (dragging) actions.onDragEnd() else actions.onReleased(holdId)
+            return
+        }
+        val t = transform()
+        if (t != null) {
+            // Small wobble while holding still isn't a drag; past the slop the tile follows the finger.
+            val from = when {
+                dragging -> change.previousPosition
+                (change.position - down.position).getDistance() > slop -> down.position.also { dragging = true }
+                else -> null
+            }
+            if (from != null) {
+                val a = t.screenToWall(from)
+                val b = t.screenToWall(change.position)
+                actions.onDrag(b.x - a.x, b.y - a.y)
+            }
+        }
+        change.consume()
     }
 }
 
@@ -233,7 +376,7 @@ private fun DrawScope.drawMarkers(holds: List<Hold>, labels: Map<Int, TextLayout
     val outline = Stroke(1.dp.toPx())
     for (hold in holds) {
         val label = labels[hold.id]
-        val width = maxOf(minSide, (label?.size?.width ?: 0) + 2 * padding)
+        val width = max(minSide, (label?.size?.width ?: 0) + 2 * padding)
         val size = Size(width, minSide)
         val center = t.wallToScreen(hold.x, hold.y)
         val topLeft = Offset(center.x - width / 2f, center.y - minSide / 2f)
@@ -254,13 +397,12 @@ private fun DrawScope.drawRings(rings: Map<Int, Color>, holdsById: Map<Int, Hold
     for ((holdId, color) in rings) {
         val hold = holdsById[holdId] ?: continue
         val center = t.wallToScreen(hold.x, hold.y)
-        val radius = maxOf((hold.ringIn ?: ringSizeIn) * t.scale, MIN_RING_RADIUS.toPx())
+        val radius = max((hold.ringIn ?: ringSizeIn) * t.scale, MIN_RING_RADIUS.toPx())
         // A thin dark outline outside the colored ring keeps it visible on any photo (§7.3).
         drawCircle(Color.Black.copy(alpha = 0.75f), radius + outerGap, center, style = outerStroke)
         drawCircle(color, radius, center, style = stroke)
     }
 }
-
 
 /** Small glowing dots, one per hold whose LEDs are lit (§7.3). Sits inside the ring, so both show. */
 private fun DrawScope.drawLedPreview(dots: Map<Int, Color>, holdsById: Map<Int, Hold>, t: WallTransform) {
@@ -283,6 +425,7 @@ private fun DrawScope.drawLedPreview(dots: Map<Int, Color>, holdsById: Map<Int, 
 /** A lit LED's center looks almost white. */
 private fun lerpToWhite(color: Color): Color =
     Color(red = 0.5f + color.red / 2f, green = 0.5f + color.green / 2f, blue = 0.5f + color.blue / 2f)
+
 @TabletPreviews
 @Composable
 private fun WallViewPreview() {

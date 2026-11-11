@@ -212,6 +212,39 @@ M7 notes (consistent with the doc unless marked, listed so they are not a surpri
 - Removed `StubBody`, which nothing has used since M6.
 - No protocol or firmware changes. No database schema change (only new queries), so no migration.
 
+After M7: fixes and changes from testing on the tablet.
+
+- **Photo import fixed.** Taking or choosing any photo failed with "That file couldn't be read as
+  a photo". The size check before decoding treated Android's normal "no bitmap" answer in
+  size-only mode as a failure. JVM unit tests can't run Android's image decoder, which is why
+  they didn't catch it.
+- **Map LEDs: press and hold a tile** (you asked for this; §7.3, §12.1 and §16 updated with your
+  OK). Holding a tile lights its LEDs on the wall. Drag to move it (saved when you lift your
+  finger), or let go to open a menu with **Change LED number(s)** and **Delete tile**. Changing to
+  an LED that's already in another tile, or Hidden, is refused. Change and Delete have Undo in the
+  snackbar. Tapping a tile still pairs the current LED with it, as before.
+- **Tiles show their LED numbers** ("37, 38" for a paired hold) instead of the hold id, on every
+  screen that shows markers. Map LEDs messages now name tiles by their LEDs too, e.g. "LED 37
+  paired with LED 36" and the status "Paired with LED 36" or "Placed".
+- A tile whose LEDs are changed keeps its id (§6.1: ids never change), so routes that use it now
+  light the new LEDs.
+- **Known hidden LEDs** (you asked for this; §2, §12.1 and §16 updated). Your list of the 75 LEDs
+  behind the wall is built into the app (`data/layout/KnownHiddenLeds.kt`).
+  - **Start mapping** marks them Hidden.
+  - A layout that was started before the list (like the one on your tablet) gets a **Mark Hidden**
+    button in Map LEDs. It marks every listed LED that isn't mapped yet, with Undo. Listed LEDs
+    that are already in tiles are left alone, and the snackbar names them.
+  - After a tap or Hidden, Map LEDs moves on to the next LED that **isn't Hidden**, so it skips
+    them. Prev, Next and the jump field still stop on every LED, so any of them can be changed:
+    go to it and tap where it lights up, or tap a tile to pair it.
+  - Change LED number(s) still refuses a Hidden LED, and its message now says how to use one.
+- **Map LEDs' Undo snackbar goes away after 2 seconds.** Material keeps a snackbar with an action
+  up until it's tapped, so Undo used to stay up. Accessibility settings that ask for longer
+  timeouts still get them.
+- **Map LEDs' header shows the LED range**: "LED 37 of 0–549" instead of "LED 37 of 550" (§12.1
+  updated). LEDs are numbered from 0, so the last one is 549; there are still 550. The LED count
+  fields say "They're numbered 0–549" too.
+
 ## To do by hand
 
 - [x] ~~Update Android Studio to 2026.2.2 or newer.~~ Done; the project syncs.
@@ -394,3 +427,15 @@ Note: with the placeholder layout, hold *n* is LED *n*, so the LEDs that light a
 - [ ] Backup round trip: export, uninstall and reinstall the app (or clear its data), import: routes, layout, photo and alignment all come back, and the straightened image is regenerated.
 - [ ] Connected to the board, turn Bluetooth off from quick settings: the button shows "Bluetooth is off" right away. Turn it back on: it reconnects within a few seconds and the wall shows the current route again.
 - [ ] Unplug the ESP32 for a minute: the button goes amber and keeps retrying; plug it back in: it reconnects and the route comes back. Walk out of range with the tablet and back: same.
+
+## After-M7 checklist (tablet)
+
+- [ ] Settings → Wall Setup → Photo → **Take photo**, then **Choose photo**: each opens Align with the six handles instead of the "couldn't be read" error. Save the alignment and check the straightened wall.
+- [ ] Map LEDs: tiles show LED numbers. Tap a tile to pair the current LED: it shows "36, 37" and the snackbar says "LED 37 paired with LED 36".
+- [ ] Press and hold a tile: a buzz, and the wall lights that tile's LEDs. Drag it: it follows your finger and stays where you drop it (also after leaving and reopening Wall Setup). Dragging past the wall's edge stops at the edge.
+- [ ] Hold a tile and let go: a menu shows its LEDs, **Change LED number** and **Delete tile**. Tap outside it: it closes, and the wall goes back to the current LED.
+- [ ] **Change LED number** to a free LED: the tile keeps its spot with the new number, and Undo puts it back. Try an LED that's in another tile, or a Hidden one: the field says why and Save is disabled.
+- [ ] **Delete tile**: it's gone, its LEDs count as unmapped, the current LED stays the same, and Undo brings it back. Delete another and leave it: the Undo snackbar goes away after about 2 seconds (same for pairing, Change LED number and Mark Hidden).
+- [ ] A quick tap still maps or pairs as before, and pinch-zoom still works, including starting a pinch with one finger on a tile.
+- [ ] Known hidden LEDs, on the layout already on the tablet: Map LEDs shows "N LEDs on your behind-the-wall list aren't marked Hidden yet". Tap **Mark Hidden**: the summary's hidden count goes up, the card goes away, and if any listed LED was in a tile, the snackbar names it. Undo puts it back.
+- [ ] Map an LED just before a hidden one (e.g. LED 44): it moves on to 46, not 45. **Prev** still stops on 45 and shows "Hidden". Tap where 45 lights up: it becomes a tile.
