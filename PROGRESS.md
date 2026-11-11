@@ -319,7 +319,8 @@ After M7: fixes and changes from testing on the tablet.
 - [ ] Check the strand's color order when convenient (see M4 notes).
 - [ ] Run the M5 checklist: Simulated on the AVD, Bluetooth on the tablet with the ESP32.
 - [ ] Say whether connecting to the saved board at launch is what you want (see M5 notes).
-- [ ] Run the M6 checklist, then map the real wall (about 30–45 minutes) and send me or commit the exported `wall_layout.json` as `app/src/main/assets/wall_layout.json`.
+- [ ] Run the M6 checklist.
+- [x] ~~Map the real wall and commit the exported `wall_layout.json` as `app/src/main/assets/wall_layout.json`.~~ Done: 550 LEDs, 74 holds (174 LEDs), 71 hidden, 305 unused, 0 unmapped, with 72 holds sized in Rings. A fresh install starts with this layout.
 - [ ] Say whether the M6 CSV and Review choices in the M6 notes above are OK (marked "my reading").
 - [ ] Run the M7 checklist, including a backup round trip on the tablet. Keep a backup somewhere off the tablet once the wall is mapped.
 
