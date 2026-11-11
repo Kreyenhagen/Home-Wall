@@ -14,14 +14,11 @@ import com.kreyenhagen.homewall.domain.RouteSorting
 import com.kreyenhagen.homewall.led.LedFrame
 import com.kreyenhagen.homewall.led.RouteFrames
 import com.kreyenhagen.homewall.led.ringColor
-import com.kreyenhagen.homewall.ui.wall.LedPreview
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 
@@ -43,13 +40,11 @@ data class RouteDisplayUiState(
     val layoutProblems: List<String> = emptyList(),
     val image: ImageBitmap? = null,
     val ringSizeIn: Float = AppSettings().ringSizeIn,
-    val showMarkers: Boolean = AppSettings().showHoldMarkers,
     /** What the wall shows for the current page (§8.2); null while there is nothing to show. */
     val ledFrame: LedFrame? = null,
     /** Settings → Keep screen on (§8.2). */
     val keepScreenOn: Boolean = AppSettings().keepScreenOn,
     /** holdId → dot color, when Show LED preview is on. */
-    val ledPreview: Map<Int, Color> = emptyMap(),
 ) {
     val currentRoute: Route? get() = pages.getOrNull(currentIndex)?.route
 }
@@ -60,8 +55,6 @@ class RouteDisplayViewModel(
     settings: Flow<AppSettings>,
     layout: Flow<LayoutState>,
     photo: Flow<WallPhotoState>,
-    /** The last frame actually sent to the controller (LedSync.lastSent). */
-    sentFrame: Flow<LedFrame?> = flowOf(null),
     /** Remembers the route on screen, so Route List can scroll back to it (§8.1). */
     private val onRouteShown: (Long) -> Unit = {},
 ) : ViewModel() {
@@ -83,9 +76,6 @@ class RouteDisplayViewModel(
         RouteSorting.apply(all, s.sort, s.gradeFilter, alwaysInclude = pins).map { pageFor(it, holdIds) }
     }
 
-    private val ledPreview: Flow<Map<Int, Color>> = combine(sentFrame, settings, layout) { frame, s, layoutState ->
-        if (s.showLedPreview) LedPreview.dots(frame, layoutState.layoutOrNull) else emptyMap()
-    }.distinctUntilChanged()
 
     val uiState: StateFlow<RouteDisplayUiState> =
         combine(pages, current, settings, layout, photo) { pages, cur, s, layoutState, photoState ->
@@ -100,14 +90,12 @@ class RouteDisplayViewModel(
                 layoutProblems = (layoutState as? LayoutState.Invalid)?.problems.orEmpty(),
                 image = photoState.rectified,
                 ringSizeIn = s.ringSizeIn,
-                showMarkers = s.showHoldMarkers,
                 keepScreenOn = s.keepScreenOn,
                 ledFrame = pages.getOrNull(index)?.route?.let { route ->
                     readyLayout?.let { RouteFrames.forRoute(route.holds, it) }
                 },
             )
-        }.combine(ledPreview) { state, preview -> state.copy(ledPreview = preview) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RouteDisplayUiState())
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RouteDisplayUiState())
 
     /** The pager moved (it changes halfway through a swipe, §8.2). */
     fun onPageChanged(routeId: Long, index: Int) {

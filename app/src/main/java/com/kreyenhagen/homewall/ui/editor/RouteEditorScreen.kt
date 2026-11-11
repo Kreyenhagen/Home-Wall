@@ -113,7 +113,6 @@ fun RouteEditorScreen(
             layout = it.layoutRepository.state,
             photo = it.wallPhotoRepository.state,
             settings = it.settingsRepository.settings,
-            sentFrame = it.ledSync.lastSent,
             lightsOff = it.ledSync::lightsOff,
         )
     }
@@ -254,8 +253,6 @@ private fun EditorWall(state: RouteEditorUiState, layout: WallLayout, actions: E
         modifier = modifier,
         rings = state.rings,
         ringSizeIn = state.ringSizeIn,
-        showMarkers = state.showMarkers,
-        ledPreview = state.ledPreview,
         zoomEnabled = true,
         onTapHold = actions.onTapHold,
     )

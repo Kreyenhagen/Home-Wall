@@ -14,7 +14,10 @@ data class WallLayout(
     val wall: WallGeometry,
     val ledCount: Int,
     val holds: List<Hold> = emptyList(),
+    /** LEDs behind the wall (or otherwise not under a hold) that stay off. */
     val hiddenLeds: List<Int> = emptyList(),
+    /** LEDs on the wall with no hold in front of them: they stay off and can't be picked for routes. */
+    val unusedLeds: List<Int> = emptyList(),
 ) {
     /**
      * The id for a new hold made of [leds] (§6.1): its lowest LED index if no existing hold uses
@@ -97,6 +100,10 @@ data class Hold(
     val leds: List<Int>,
     /** Free-text label; only used to color debug markers. */
     val group: String? = null,
-    /** Ring-radius override in inches. */
+    /** Ring-radius override in inches. For an oval (see [ringYIn]), half its width. */
     val ringIn: Float? = null,
+    /** For an oval ring: half its height in inches. Unset means a circle. */
+    val ringYIn: Float? = null,
+    /** The ring's rotation in degrees, clockwise as seen on the wall. Unset means 0. */
+    val ringAngle: Float? = null,
 )

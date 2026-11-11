@@ -183,18 +183,74 @@ class LayoutEditsTest {
     }
 
     @Test
-    fun markingKnownHiddenLedsLeavesTilesAlone() {
-        // base: LED 36 and LEDs 37, 38 are in tiles; LEDs 1, 2 are already Hidden.
-        val known = listOf(0, 1, 2, 3, 36, 38, 600)
-        assertEquals(listOf(0, 3), base.knownHiddenLedsToMark(known))
-        assertEquals(listOf(36, 38), base.knownHiddenLedsInTiles(known))
+    fun theKnownHiddenLedsTheHiddenListCanTake() {
+        // base: LED 36 and LEDs 37, 38 are in tiles; LEDs 1, 2 are Hidden. LED 3 is Unused here.
+        val layout = base.copy(unusedLeds = listOf(3))
+        assertEquals(listOf(0, 1, 2, 4), layout.knownHiddenLedsAvailable(listOf(0, 1, 2, 3, 4, 36, 38, 600)))
+    }
 
-        val layout = base.withUnmappedLedsHidden(known)
-        assertEquals(listOf(0, 1, 2, 3), layout.hiddenLeds)
-        assertEquals(base.holds, layout.holds) // tiles keep their LEDs
+    // ---- Unused LEDs, and the Hidden and Unused lists (§12.1) ----
+
+    @Test
+    fun unusedTakesTheLedOutOfItsHoldOrTheHiddenList() {
+        val layout = base.withLedUnused(36).withLedUnused(2)
+        assertNull(layout.hold(36))
+        assertEquals(listOf(2, 36), layout.unusedLeds)
+        assertEquals(listOf(1), layout.hiddenLeds)
+        assertEquals(LedAssignment.Unused, layout.assignmentOf(36))
+        assertEquals(0, layout.firstUnmappedLed())
+        assertEquals(3, layout.firstUnmappedLed(2)) // Unused LEDs count as mapped
         assertValid(layout)
-        assertTrue(layout.knownHiddenLedsToMark(known).isEmpty())
-        assertEquals(layout, layout.withUnmappedLedsHidden(known)) // marking again changes nothing
+
+        val placed = layout.withLedInNewHold(36, 10f, 20f) // and can be placed again
+        assertEquals(listOf(2), placed.unusedLeds)
+        assertEquals(listOf(36), placed.hold(36)?.leds)
+    }
+
+    @Test
+    fun aTileCantTakeAnUnusedLed() {
+        val layout = base.withLedUnused(40)
+        assertEquals("LED 40 is marked Unused. To use it, go to LED 40 and tap this tile.", layout.holdLedsProblem(37, listOf(37, 40)))
+    }
+
+    @Test
+    fun theHiddenAndUnusedListsCanBeReplaced() {
+        val layout = base.withLedUnused(40)
+        assertNull(layout.offListProblem(OffList.HIDDEN, listOf(0, 2, 3)))
+        val hidden = layout.withOffList(OffList.HIDDEN, listOf(3, 0, 2, 3))
+        assertEquals(listOf(0, 2, 3), hidden.hiddenLeds) // LED 1 was taken out: it's unmapped now
+        assertEquals(LedAssignment.Unmapped, hidden.assignmentOf(1))
+        assertValid(hidden)
+
+        assertNull(layout.offListProblem(OffList.UNUSED, emptyList()))
+        assertEquals(emptyList<Int>(), layout.withOffList(OffList.UNUSED, emptyList()).unusedLeds)
+        assertEquals(listOf(1, 2), layout.ledsIn(OffList.HIDDEN))
+        assertEquals(listOf(40), layout.ledsIn(OffList.UNUSED))
+    }
+
+    @Test
+    fun theListsRefuseLedsInTilesOrTheOtherList() {
+        val layout = base.withLedUnused(40)
+        assertEquals("LED 37 is in a tile. To make it Hidden, go to LED 37 and tap Hidden.", layout.offListProblem(OffList.HIDDEN, listOf(1, 37)))
+        assertEquals("LED 36 is in a tile. To make it Unused, go to LED 36 and tap Unused.", layout.offListProblem(OffList.UNUSED, listOf(36)))
+        assertEquals("LED 40 is in the Unused list. Take it out of that list first.", layout.offListProblem(OffList.HIDDEN, listOf(40)))
+        assertEquals("LED 1 is in the Hidden list. Take it out of that list first.", layout.offListProblem(OffList.UNUSED, listOf(1, 40)))
+        assertEquals("There's no LED 550. LEDs go from 0 to 549.", layout.offListProblem(OffList.HIDDEN, listOf(550)))
+    }
+
+    @Test
+    fun ledListsAreReadWithRanges() {
+        assertEquals(emptyList<Int>(), parseLedList(" "))
+        assertEquals(listOf(0, 1, 2, 3, 45), parseLedList("0–3, 45"))
+        assertEquals(listOf(0, 1, 2, 7, 8, 9), parseLedList("9 8 7; 0 - 2, 2"))
+        assertEquals(listOf(5, 6), parseLedList("5-6\n"))
+        assertEquals(listOf(5, 6, 7), parseLedList("5—7"))
+        assertNull(parseLedList("7-5"))
+        assertNull(parseLedList("1-2-3"))
+        assertNull(parseLedList("abc"))
+        assertNull(parseLedList("-5"))
+        assertNull(parseLedList("0-999999"))
+        assertEquals(KNOWN_HIDDEN_LEDS, parseLedList(ledRanges(KNOWN_HIDDEN_LEDS))) // what the editor shows reads back
     }
 
     @Test
@@ -205,6 +261,17 @@ class LayoutEditsTest {
         val one = MappingSummary(ledCount = 3, holds = 1, ledsInHolds = 1, hidden = 2)
         assertEquals("3 LEDs · 1 hold (1 LED) · 2 hidden", one.text)
         assertEquals(0, one.unmapped)
+
+        val withUnused = MappingSummary.of(base.withLedUnused(40).withLedUnused(41))
+        assertEquals("550 LEDs · 2 holds (3 LEDs) · 2 hidden · 2 unused", withUnused.text)
+        assertEquals(543, withUnused.unmapped)
+    }
+
+    @Test
+    fun loweringTheLedCountDropsUnusedLedsPastIt() {
+        val layout = base.withLedUnused(40).withLedUnused(500)
+        assertEquals("LEDs 400–549 lose their mapping (0 in holds, 0 hidden, 1 unused).", layout.ledCountLossNote(400))
+        assertEquals(listOf(40), layout.withLedCount(400).unusedLeds)
     }
 
     // ---- Map LEDs → Change LEDs (§12.1) ----
@@ -222,7 +289,7 @@ class LayoutEditsTest {
     @Test
     fun aTileCantTakeAnotherTilesOrAHiddenLed() {
         assertEquals("LED 36 is already in another tile.", base.holdLedsProblem(37, listOf(36)))
-        assertEquals("LED 1 is marked Hidden. To use it, go to LED 1 and tap this tile.", base.holdLedsProblem(37, listOf(1)))
+        assertEquals("LED 1 is on the Hidden list. To use it, take it out with Edit Hidden list first.", base.holdLedsProblem(37, listOf(1)))
         assertEquals("There's no LED 550. LEDs go from 0 to 549.", base.holdLedsProblem(37, listOf(550)))
         assertEquals("A tile needs at least one LED. Use Delete tile to remove it.", base.holdLedsProblem(37, emptyList()))
         assertEquals("That tile no longer exists.", base.holdLedsProblem(99, listOf(99)))

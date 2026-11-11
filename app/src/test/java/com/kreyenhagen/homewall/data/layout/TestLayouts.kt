@@ -18,11 +18,12 @@ const val DOC_EXAMPLE_JSON = """
     { "id": 7,  "x": 12.0, "y": 22.0, "leds": [7, 8], "group": "main" },
     { "id": 40, "x": 8.0,  "y": 26.0, "leds": [40], "group": "aux-a", "ringIn": 2.5 }
   ],
-  "hiddenLeds": [1, 2, 3, 4, 5, 6]
+  "hiddenLeds": [1, 2, 3, 4, 5, 6],
+  "unusedLeds": [9, 10]
 }
 """
 
 val REAL_WALL = WallGeometry(96f, listOf(Panel("Kicker", 15f), Panel("Main", 99f)))
 
-fun layoutOf(vararg holds: Hold, ledCount: Int = 550, hidden: List<Int> = emptyList()) =
-    WallLayout(wall = REAL_WALL, ledCount = ledCount, holds = holds.toList(), hiddenLeds = hidden)
+fun layoutOf(vararg holds: Hold, ledCount: Int = 550, hidden: List<Int> = emptyList(), unused: List<Int> = emptyList()) =
+    WallLayout(wall = REAL_WALL, ledCount = ledCount, holds = holds.toList(), hiddenLeds = hidden, unusedLeds = unused)

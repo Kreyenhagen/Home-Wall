@@ -95,4 +95,18 @@ class CsvLayoutTest {
         )
         assertEquals(layout, ok(csv))
     }
+
+    @Test
+    fun unusedLedsHaveTheHoldKeyUnusedAndNoPosition() {
+        val layout = layoutOf(Hold(0, 4f, 6f, listOf(0)), ledCount = 4, hidden = listOf(1), unused = listOf(2, 3))
+        val csv = CsvLayout.encode(layout)
+        assertEquals("led,x_in,y_in,hold\n0,4,6,0\n1,,,\n2,,,unused\n3,,,unused\n", csv)
+        assertEquals(layout, ok(csv))
+
+        assertEquals(listOf(5), ok("led,x_in,y_in,hold\n5,,,Unused\n").unusedLeds) // any case
+        assertEquals(
+            listOf("Line 2: LED 5 is marked unused, so leave x_in and y_in blank."),
+            problems("led,x_in,y_in,hold\n5,10,20,unused\n"),
+        )
+    }
 }

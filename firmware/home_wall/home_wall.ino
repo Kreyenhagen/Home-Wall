@@ -27,7 +27,7 @@
 #define DATA_PIN            16      // GPIO connected to the LED data line
 #define LED_COUNT           550
 #define CHIPSET             WS2811
-#define COLOR_ORDER         RBG
+#define COLOR_ORDER         RGB
 #define DEVICE_NAME         "HomeWall"
 #define MAX_MILLIAMPS       7000    // power cap: ~85% of the 24 V, 8.33 A supply
 #define MA_PER_PIXEL_WHITE  15      // estimated draw of one 24 V pixel at full white

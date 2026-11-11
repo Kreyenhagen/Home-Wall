@@ -32,7 +32,6 @@ data class AppSettings(
     val savedDevice: SavedDevice? = null,
     val ledBrightnessPercent: Int = 50,
     val ringSizeIn: Float = 3.5f,
-    val showHoldMarkers: Boolean = true,
     /** On in debug builds; [com.kreyenhagen.homewall.AppContainer] passes that in. */
     val showLedPreview: Boolean = false,
     val keepScreenOn: Boolean = true,
@@ -83,7 +82,6 @@ class SettingsRepository(
         it[SettingsKeys.RING_SIZE] = inches.coerceIn(AppSettings.RING_SIZE_RANGE)
     }
 
-    suspend fun setShowHoldMarkers(show: Boolean) = edit { it[SettingsKeys.SHOW_MARKERS] = show }
 
     suspend fun setShowLedPreview(show: Boolean) = edit { it[SettingsKeys.SHOW_LED_PREVIEW] = show }
 
@@ -110,7 +108,6 @@ internal object SettingsKeys {
     val DEVICE_NAME = stringPreferencesKey("ble_device_name")
     val BRIGHTNESS = intPreferencesKey("led_brightness_percent")
     val RING_SIZE = floatPreferencesKey("ring_size_in")
-    val SHOW_MARKERS = booleanPreferencesKey("show_hold_markers")
     val SHOW_LED_PREVIEW = booleanPreferencesKey("show_led_preview")
     val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
     val SIMULATED = booleanPreferencesKey("simulated_led_controller")
@@ -132,7 +129,6 @@ internal fun Preferences.toAppSettings(d: AppSettings): AppSettings {
         savedDevice = if (address != null) SavedDevice(address, this[SettingsKeys.DEVICE_NAME].orEmpty()) else d.savedDevice,
         ledBrightnessPercent = (this[SettingsKeys.BRIGHTNESS] ?: d.ledBrightnessPercent).coerceIn(AppSettings.BRIGHTNESS_RANGE),
         ringSizeIn = ringSize.coerceIn(AppSettings.RING_SIZE_RANGE),
-        showHoldMarkers = this[SettingsKeys.SHOW_MARKERS] ?: d.showHoldMarkers,
         showLedPreview = this[SettingsKeys.SHOW_LED_PREVIEW] ?: d.showLedPreview,
         keepScreenOn = this[SettingsKeys.KEEP_SCREEN_ON] ?: d.keepScreenOn,
         simulatedLeds = this[SettingsKeys.SIMULATED] ?: d.simulatedLeds,

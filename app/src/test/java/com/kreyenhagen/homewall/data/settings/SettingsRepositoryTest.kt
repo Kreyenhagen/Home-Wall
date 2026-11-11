@@ -38,7 +38,6 @@ class SettingsRepositoryTest {
         assertNull(settings.savedDevice)
         assertEquals(50, settings.ledBrightnessPercent)
         assertEquals(3.5f, settings.ringSizeIn)
-        assertEquals(true, settings.showHoldMarkers)
         assertEquals(true, settings.keepScreenOn)
         assertEquals(false, settings.simulatedLeds)
     }
@@ -51,7 +50,6 @@ class SettingsRepositoryTest {
         repo.setSavedDevice(SavedDevice("24:6F:28:AA:BB:CC", "HomeWall"))
         repo.setLedBrightness(80)
         repo.setRingSize(4.5f)
-        repo.setShowHoldMarkers(false)
         repo.setShowLedPreview(true)
         repo.setKeepScreenOn(false)
         repo.setSimulatedLeds(true)
@@ -63,7 +61,6 @@ class SettingsRepositoryTest {
                 savedDevice = SavedDevice("24:6F:28:AA:BB:CC", "HomeWall"),
                 ledBrightnessPercent = 80,
                 ringSizeIn = 4.5f,
-                showHoldMarkers = false,
                 showLedPreview = true,
                 keepScreenOn = false,
                 simulatedLeds = true,

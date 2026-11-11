@@ -58,7 +58,6 @@ fun RouteDisplayScreen(routeId: Long, onBack: () -> Unit, onEdit: (routeId: Long
             settings = it.settingsRepository.settings,
             layout = it.layoutRepository.state,
             photo = it.wallPhotoRepository.state,
-            sentFrame = it.ledSync.lastSent,
             onRouteShown = { id -> it.lastViewedRouteId.value = id },
         )
     }
@@ -163,8 +162,6 @@ private fun RoutePageContent(page: RoutePage, position: String, layout: WallLayo
                 modifier = modifier,
                 rings = page.rings,
                 ringSizeIn = state.ringSizeIn,
-                showMarkers = state.showMarkers,
-                ledPreview = state.ledPreview,
             )
         }
         if (landscape) {
@@ -219,7 +216,7 @@ private fun RouteDisplayPreview() {
     val page = RouteDisplayViewModel.pageFor(route, layout.holds.mapTo(HashSet()) { it.id })
     HomeWallTheme {
         RouteDisplayContent(
-            state = RouteDisplayUiState(loaded = true, pages = listOf(page), layout = layout, showMarkers = true),
+            state = RouteDisplayUiState(loaded = true, pages = listOf(page), layout = layout),
             onBack = {},
             onEdit = {},
             onPageChanged = { _, _ -> },

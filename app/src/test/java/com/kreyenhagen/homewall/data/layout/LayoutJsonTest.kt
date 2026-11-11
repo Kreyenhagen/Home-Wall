@@ -15,6 +15,7 @@ class LayoutJsonTest {
         assertEquals(Hold(7, 12f, 22f, listOf(7, 8), group = "main"), layout.holds[1])
         assertEquals(2.5f, layout.holds[2].ringIn)
         assertEquals(listOf(1, 2, 3, 4, 5, 6), layout.hiddenLeds)
+        assertEquals(listOf(9, 10), layout.unusedLeds)
     }
 
     @Test
@@ -31,7 +32,8 @@ class LayoutJsonTest {
         val lines = text.lines()
         assertTrue(lines.contains("""    {"id":0,"x":4.0,"y":6.0,"leds":[0]},"""))
         assertTrue(lines.contains("""    {"id":40,"x":8.0,"y":26.0,"leds":[40],"group":"aux-a","ringIn":2.5}"""))
-        assertTrue(lines.contains("""  "hiddenLeds": [1,2,3,4,5,6]"""))
+        assertTrue(lines.contains("""  "hiddenLeds": [1,2,3,4,5,6],"""))
+        assertTrue(lines.contains("""  "unusedLeds": [9,10]"""))
         assertTrue(lines.contains("""  "schemaVersion": 1,"""))
     }
 

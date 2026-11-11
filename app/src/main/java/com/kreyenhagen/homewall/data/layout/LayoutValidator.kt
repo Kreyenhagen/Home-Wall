@@ -50,7 +50,9 @@ object LayoutValidator {
             } else if (geometryOk && (hold.x !in 0f..wall.widthIn || hold.y !in 0f..wall.heightIn)) {
                 problems += "$h: position (${hold.x}, ${hold.y}) is off the wall (${wall.widthIn} × ${wall.heightIn} in)."
             }
-            hold.ringIn?.let { if (!(it > 0f)) problems += "$h: ringIn must be positive (got $it)." }
+            hold.ringIn?.let { if (!(it > 0f) || it.isInfinite()) problems += "$h: ringIn must be positive (got $it)." }
+            hold.ringYIn?.let { if (!(it > 0f) || it.isInfinite()) problems += "$h: ringYIn must be positive (got $it)." }
+            hold.ringAngle?.let { if (it.isNaN() || it.isInfinite()) problems += "$h: ringAngle must be a number of degrees (got $it)." }
         }
 
         val hidden = mutableSetOf<Int>()
@@ -59,6 +61,16 @@ object LayoutValidator {
                 ledCountOk && led !in 0 until ledCount -> problems += "hiddenLeds: LED $led is out of range (0–${ledCount - 1})."
                 !hidden.add(led) -> problems += "hiddenLeds: LED $led is listed twice."
                 led in ledOwner -> problems += "LED $led is in both hold ${ledOwner[led]} and hiddenLeds."
+            }
+        }
+
+        val unused = mutableSetOf<Int>()
+        for (led in layout.unusedLeds) {
+            when {
+                ledCountOk && led !in 0 until ledCount -> problems += "unusedLeds: LED $led is out of range (0–${ledCount - 1})."
+                !unused.add(led) -> problems += "unusedLeds: LED $led is listed twice."
+                led in ledOwner -> problems += "LED $led is in both hold ${ledOwner[led]} and unusedLeds."
+                led in hidden -> problems += "LED $led is in both hiddenLeds and unusedLeds."
             }
         }
 

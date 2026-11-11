@@ -21,7 +21,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
@@ -52,6 +51,7 @@ import com.kreyenhagen.homewall.R
 import com.kreyenhagen.homewall.data.layout.Hold
 import com.kreyenhagen.homewall.data.layout.KNOWN_HIDDEN_LEDS
 import com.kreyenhagen.homewall.data.layout.MappingSummary
+import com.kreyenhagen.homewall.data.layout.OffList
 import com.kreyenhagen.homewall.data.layout.PlaceholderLayout
 import com.kreyenhagen.homewall.data.layout.ledCountLossNote
 import com.kreyenhagen.homewall.data.layout.ledsLabel
@@ -73,8 +73,13 @@ class MapLedsActions(
     val onNext: () -> Unit,
     val onJumpTo: (String) -> Boolean,
     val onHide: () -> Unit,
-    /** Marks the known hidden LEDs that aren't mapped yet Hidden (§12.1). */
-    val onMarkKnownHidden: () -> Unit,
+    val onUnused: () -> Unit,
+    /** Editing the Hidden or Unused list (§12.1). */
+    val offListProblem: (OffList, String) -> String?,
+    /** Returns false if the list wasn't saved, so the editor stays open. */
+    val onSaveOffList: (OffList, String) -> Boolean,
+    /** The text with the known hidden LEDs added, or null if that adds nothing. */
+    val withKnownHidden: (String) -> String?,
     val onTapHold: (Int) -> Unit,
     val onTapEmpty: (WallPoint) -> Unit,
     /** Press and hold a tile: drag it, or let go for its menu. */
@@ -87,7 +92,7 @@ class MapLedsActions(
 ) {
     companion object {
         val None = MapLedsActions(
-            {}, {}, {}, {}, { true }, {}, {}, {}, {},
+            {}, {}, {}, {}, { true }, {}, {}, { _, _ -> null }, { _, _ -> true }, { null }, {}, {},
             HoldPressActions({}, { _, _ -> }, {}, {}, {}),
             {}, {}, {}, { null }, {},
         )
@@ -219,11 +224,8 @@ private fun TileLedsDialog(tile: Hold, problemOf: (String) -> String?, onSave: (
 @Composable
 private fun MapControls(state: MapLedsUiState, actions: MapLedsActions, modifier: Modifier) {
     var showCountDialog by rememberSaveable { mutableStateOf(false) }
+    var editingList by rememberSaveable { mutableStateOf<OffList?>(null) }
     Column(modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-        if (state.knownHiddenToMark > 0) {
-            KnownHiddenCard(state.knownHiddenToMark, actions.onMarkKnownHidden)
-            Spacer(Modifier.height(12.dp))
-        }
         Row(verticalAlignment = Alignment.Bottom) {
             Text("LED ${state.current}", style = MaterialTheme.typography.headlineSmall)
             Text(
@@ -237,8 +239,8 @@ private fun MapControls(state: MapLedsUiState, actions: MapLedsActions, modifier
             Text(state.status, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
         }
         Text(
-            "Tap where it lights up, or tap a tile to pair this LED with it. Press and hold a tile to " +
-                "drag it, or let go to change or delete it. Pinch to zoom.",
+            "Tap where it lights up, or tap a tile to pair this LED with it. No hold there? Tap Unused. " +
+                "Press and hold a tile to drag it, or let go to change or delete it. Pinch to zoom.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
@@ -248,20 +250,25 @@ private fun MapControls(state: MapLedsUiState, actions: MapLedsActions, modifier
             OutlinedButton(onClick = actions.onPrevious, enabled = state.canGoBack) { Text("Prev") }
             OutlinedButton(onClick = actions.onNext, enabled = state.canGoForward) { Text("Next") }
             FilledTonalButton(onClick = actions.onHide) { Text("Hidden") }
+            FilledTonalButton(onClick = actions.onUnused) { Text("Unused") }
             JumpField(actions.onJumpTo)
         }
         state.summary?.let { summary ->
             Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "${summary.text} · ${summary.unmapped} unmapped",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
+            Text(
+                "${summary.text} · ${summary.unmapped} unmapped",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { editingList = OffList.HIDDEN }) { Text("Edit Hidden list") }
+                TextButton(onClick = { editingList = OffList.UNUSED }) { Text("Edit Unused list") }
                 TextButton(onClick = { showCountDialog = true }) { Text("LED count") }
             }
         }
+    }
+    editingList?.let { list ->
+        OffListDialog(list, state.offListText(list), actions, onDismiss = { editingList = null })
     }
     if (showCountDialog) {
         LedCountDialog(
@@ -277,31 +284,52 @@ private fun MapControls(state: MapLedsUiState, actions: MapLedsActions, modifier
 }
 
 /**
- * Shown when some of the LEDs known to be behind the wall (§12.1) aren't mapped yet, e.g. in a
- * layout started before the list was added.
+ * Edit the Hidden or Unused list as text (§12.1), e.g. "0–40, 45, 54". An LED that's in a tile or
+ * in the other list is refused. LEDs taken out become unmapped.
  */
 @Composable
-private fun KnownHiddenCard(count: Int, onMark: () -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (count == 1) {
-                    "1 LED on your behind-the-wall list isn't marked Hidden yet."
-                } else {
-                    "$count LEDs on your behind-the-wall list aren't marked Hidden yet."
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(8.dp))
-            TextButton(onClick = onMark) { Text("Mark Hidden") }
-        }
-    }
+private fun OffListDialog(list: OffList, initial: String, actions: MapLedsActions, onDismiss: () -> Unit) {
+    var text by rememberSaveable(list) { mutableStateOf(initial) }
+    val problem = actions.offListProblem(list, text)
+    val withKnown = if (list == OffList.HIDDEN) actions.withKnownHidden(text) else null
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${list.label} LEDs") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    when (list) {
+                        OffList.HIDDEN -> "LEDs behind the wall. They're never lit."
+                        OffList.UNUSED -> "LEDs on the wall with no hold in front of them. They're never lit and can't be picked for routes."
+                    } + " Separate numbers with commas, and use a dash for a range, e.g. 0–40, 45. " +
+                        "LEDs you take out become unmapped.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { new -> text = new.filter { it.isDigit() || it in OFF_LIST_CHARS }.take(4_000) },
+                    label = { Text("LEDs") },
+                    isError = problem != null,
+                    supportingText = problem?.let { { Text(it) } },
+                    minLines = 3,
+                    maxLines = 8,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (withKnown != null) {
+                    TextButton(onClick = { text = withKnown }) { Text("Add your behind-the-wall list") }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { if (actions.onSaveOffList(list, text)) onDismiss() }, enabled = problem == null) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
+
+/** Besides digits, what the Hidden and Unused list fields accept: separators and range dashes. */
+private const val OFF_LIST_CHARS = ", ;-–—\n"
 
 @Composable
 private fun JumpField(onJumpTo: (String) -> Boolean) {
@@ -339,10 +367,10 @@ private fun StartMapping(state: MapLedsUiState, onStart: (Int) -> Unit, modifier
                 Spacer(Modifier.height(12.dp))
                 Text(
                     "The wall lights one LED at a time, and you tap where it shows up on the picture. " +
-                        "Tap a tile to pair the LED with it, or Hidden for an LED behind the wall. " +
-                        "Every tap is saved, so you can stop and carry on later.\n\n" +
-                        "The ${KNOWN_HIDDEN_LEDS.size} LEDs on your behind-the-wall list start out Hidden and are " +
-                        "skipped. To change one, go to it and tap where it lights up.",
+                        "Tap a tile to pair the LED with it, Hidden for an LED behind the wall, or Unused for " +
+                        "one with no hold in front of it. Every tap is saved, so you can stop and carry on later.\n\n" +
+                        "The ${KNOWN_HIDDEN_LEDS.size} LEDs on your behind-the-wall list start out Hidden. Hidden " +
+                        "LEDs are skipped and can't be placed; to use one, take it out with Edit Hidden list.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(16.dp))

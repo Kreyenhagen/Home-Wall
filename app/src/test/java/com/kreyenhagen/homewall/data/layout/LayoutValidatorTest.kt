@@ -38,6 +38,15 @@ class LayoutValidatorTest {
     )
 
     @Test
+    fun unusedLedsFollowTheSameRules() {
+        assertProblem(layoutOf(Hold(5, 10f, 10f, listOf(5)), unused = listOf(5)), "LED 5 is in both hold 5 and unusedLeds")
+        assertProblem(layoutOf(hidden = listOf(7), unused = listOf(7)), "LED 7 is in both hiddenLeds and unusedLeds")
+        assertProblem(layoutOf(unused = listOf(8, 8)), "unusedLeds: LED 8 is listed twice")
+        assertProblem(layoutOf(unused = listOf(600)), "unusedLeds: LED 600 is out of range")
+        assertEquals(emptyList<String>(), problems(layoutOf(Hold(5, 10f, 10f, listOf(5)), hidden = listOf(6), unused = listOf(7))))
+    }
+
+    @Test
     fun outOfRangeIndices() {
         assertProblem(layoutOf(Hold(5, 10f, 10f, listOf(550))), "LED 550 is out of range")
         assertProblem(layoutOf(Hold(5, 10f, 10f, listOf(-1))), "LED -1 is out of range")

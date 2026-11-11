@@ -161,7 +161,6 @@ class SettingsViewModel(
 
     // ---- Settings ----
 
-    fun setShowHoldMarkers(show: Boolean) = launch { repo.setShowHoldMarkers(show) }
     fun setShowLedPreview(show: Boolean) = launch { repo.setShowLedPreview(show) }
     fun setKeepScreenOn(on: Boolean) = launch { repo.setKeepScreenOn(on) }
     fun setSimulatedLeds(on: Boolean) = launch { repo.setSimulatedLeds(on) }

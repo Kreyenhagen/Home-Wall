@@ -62,16 +62,29 @@ fun WallSetupScreen(onBack: () -> Unit) {
     }
     val state by vm.uiState.collectAsStateWithLifecycle()
     val mapState by mapVm.uiState.collectAsStateWithLifecycle()
+    val ringsVm = appViewModel {
+        RingsViewModel(
+            layoutRepo = it.layoutRepository,
+            photo = it.wallPhotoRepository.state,
+            settings = it.settingsRepository.settings,
+        )
+    }
     val reviewState by reviewVm.uiState.collectAsStateWithLifecycle()
+    val ringsState by ringsVm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val accessibility = LocalAccessibilityManager.current
     val snackbar = remember { SnackbarHostState() }
 
-    // §9.2: Map LEDs lights the current LED, Review the identified hold or all holds. Photo and
-    // Align (and Map LEDs before mapping starts) keep the last route lit.
+    // §9.2: Map LEDs lights the current LED, Rings the selected hold, Review the identified hold or
+    // all holds. Photo and Align (and Map LEDs before mapping starts) keep the last route lit.
     DriveLeds(
         when (state.step) {
             WallSetupStep.MAP_LEDS -> mapState.ledFrame?.let(WallLeds::Frame) ?: WallLeds.LastRoute
+            WallSetupStep.RINGS -> when {
+                !ringsState.loaded -> null
+                ringsState.needsMapping -> WallLeds.LastRoute
+                else -> WallLeds.Frame(ringsState.ledFrame)
+            }
             WallSetupStep.REVIEW -> if (reviewState.loaded) WallLeds.Frame(reviewState.ledFrame) else null
             else -> WallLeds.LastRoute
         },
@@ -96,6 +109,12 @@ fun WallSetupScreen(onBack: () -> Unit) {
         }
         if (result == SnackbarResult.ActionPerformed) mapVm.undo()
         mapVm.messageShown(message.id)
+    }
+    LaunchedEffect(ringsState.message) {
+        val message = ringsState.message ?: return@LaunchedEffect
+        snackbar.currentSnackbarData?.dismiss()
+        snackbar.showSnackbar(message.text)
+        ringsVm.messageShown(message.id)
     }
     LaunchedEffect(reviewState.message) {
         val message = reviewState.message ?: return@LaunchedEffect
@@ -154,7 +173,10 @@ fun WallSetupScreen(onBack: () -> Unit) {
                         onNext = mapVm::next,
                         onJumpTo = mapVm::jumpTo,
                         onHide = mapVm::hide,
-                        onMarkKnownHidden = mapVm::markKnownHidden,
+                        onUnused = mapVm::markUnused,
+                        offListProblem = mapVm::offListProblem,
+                        onSaveOffList = mapVm::saveOffList,
+                        withKnownHidden = mapVm::withKnownHidden,
                         onTapHold = mapVm::tapHold,
                         onTapEmpty = mapVm::tapEmpty,
                         tilePress = HoldPressActions(
@@ -169,6 +191,31 @@ fun WallSetupScreen(onBack: () -> Unit) {
                         onDeleteTile = mapVm::deleteTile,
                         tileLedsProblem = mapVm::tileLedsProblem,
                         onSaveTileLeds = mapVm::saveTileLeds,
+                    )
+                },
+            )
+        },
+        rings = {
+            RingsStep(
+                state = ringsState,
+                actions = remember(ringsVm, mapVm, vm) {
+                    RingsActions(
+                        onTapHold = ringsVm::tapHold,
+                        onTapEmpty = ringsVm::tapEmpty,
+                        onDragHandle = ringsVm::dragHandle,
+                        onEndHandleDrag = ringsVm::endHandleDrag,
+                        onCancelHandleDrag = ringsVm::cancelHandleDrag,
+                        onWidth = ringsVm::setWidth,
+                        onHeight = ringsVm::setHeight,
+                        onAngle = ringsVm::setAngle,
+                        onSliderDone = ringsVm::endSliderChange,
+                        onMakeCircle = ringsVm::makeCircle,
+                        onUseDefault = ringsVm::useDefault,
+                        onRevert = ringsVm::revert,
+                        onMapLeds = {
+                            mapVm.goToFirstUnmapped()
+                            vm.selectStep(WallSetupStep.MAP_LEDS)
+                        },
                     )
                 },
             )
@@ -213,6 +260,7 @@ fun WallSetupContent(
     onChoosePhoto: () -> Unit,
     alignActions: AlignActions,
     mapLeds: @Composable () -> Unit,
+    rings: @Composable () -> Unit,
     review: @Composable () -> Unit,
 ) {
     LaunchedEffect(state.message) {
@@ -236,6 +284,7 @@ fun WallSetupContent(
                 WallSetupStep.PHOTO -> PhotoStep(state.photo, state.hasPhoto, state.working, onTakePhoto, onChoosePhoto)
                 WallSetupStep.ALIGN -> AlignStep(state, alignActions)
                 WallSetupStep.MAP_LEDS -> mapLeds()
+                WallSetupStep.RINGS -> rings()
                 WallSetupStep.REVIEW -> review()
             }
         }

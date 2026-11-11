@@ -12,6 +12,8 @@ import java.util.Locale
  * 8,12,22,A
  * ```
  * - `x_in`/`y_in` are inches on the unfolded wall (§5). Blank x and y (with no hold key) means hidden.
+ * - Blank x and y with the hold key `unused` means Unused: on the wall but with no hold. The key
+ *   `unused` is kept for that, so it can't name a hold.
  * - Rows sharing a `hold` key form one hold, positioned at the first such row's x/y; later rows of
  *   the same hold may leave x/y blank. A blank key means the LED is its own hold.
  * - LEDs missing from the file are unmapped. `ledCount` is the highest `led` + 1.
@@ -49,6 +51,7 @@ object CsvLayout {
         val problems = mutableListOf<String>()
         val seenLeds = HashSet<Int>()
         val hidden = mutableListOf<Int>()
+        val unused = mutableListOf<Int>()
         // Holds in file order: key → (position, leds). Unkeyed rows get a unique key each.
         val holdPositions = LinkedHashMap<String, Pair<Float, Float>>()
         val holdLeds = LinkedHashMap<String, MutableList<Int>>()
@@ -70,6 +73,14 @@ object CsvLayout {
             val xText = cell(xCol)
             val yText = cell(yCol)
 
+            if (key.equals(UNUSED_KEY, ignoreCase = true)) {
+                if (xText.isEmpty() && yText.isEmpty()) {
+                    unused += led
+                } else {
+                    problems += "Line $line: LED $led is marked $UNUSED_KEY, so leave x_in and y_in blank."
+                }
+                continue
+            }
             if (xText.isEmpty() && yText.isEmpty()) {
                 when {
                     key.isEmpty() -> hidden += led
@@ -103,30 +114,36 @@ object CsvLayout {
             ledCount = (seenLeds.maxOrNull() ?: 0) + 1,
             holds = holds.sortedBy { it.id },
             hiddenLeds = hidden.sorted(),
+            unusedLeds = unused.sorted(),
         )
         val invalid = LayoutValidator.validate(layout)
         return if (invalid.isEmpty()) ParseResult.Ok(layout) else ParseResult.Failed(invalid)
     }
 
     /**
-     * One row per mapped or hidden LED, in LED order. Every hold gets its id as the key, so paired
-     * LEDs stay together. Unmapped LEDs are left out. Groups and ring sizes aren't part of the CSV,
-     * so JSON is the exact backup.
+     * One row per mapped, hidden or unused LED, in LED order. Every hold gets its id as the key, so
+     * paired LEDs stay together. Unmapped LEDs are left out. Groups and ring sizes aren't part of
+     * the CSV, so JSON is the exact backup.
      */
     fun encode(layout: WallLayout): String = buildString {
         append("led,x_in,y_in,hold\n")
         val holdByLed = HashMap<Int, Hold>()
         layout.holds.forEach { hold -> hold.leds.forEach { holdByLed[it] = hold } }
         val hidden = layout.hiddenLeds.toHashSet()
+        val unused = layout.unusedLeds.toHashSet()
         for (led in 0 until layout.ledCount) {
             val hold = holdByLed[led]
             when {
                 hold != null -> append(led).append(',').append(number(hold.x)).append(',').append(number(hold.y))
                     .append(',').append(hold.id).append('\n')
                 led in hidden -> append(led).append(",,,\n")
+                led in unused -> append(led).append(",,,").append(UNUSED_KEY).append('\n')
             }
         }
     }
+
+    /** The hold key that marks an LED Unused. */
+    const val UNUSED_KEY = "unused"
 
     private fun parseNumber(text: String): Float? =
         text.replace(',', '.').toFloatOrNull()?.takeIf { it.isFinite() }

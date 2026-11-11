@@ -12,11 +12,14 @@ import com.kreyenhagen.homewall.data.layout.MappingSummary
 import com.kreyenhagen.homewall.data.layout.WallLayout
 import com.kreyenhagen.homewall.data.layout.assignmentOf
 import com.kreyenhagen.homewall.data.layout.firstUnmappedLed
+import com.kreyenhagen.homewall.data.layout.OffList
 import com.kreyenhagen.homewall.data.layout.holdLedsProblem
-import com.kreyenhagen.homewall.data.layout.knownHiddenLedsInTiles
-import com.kreyenhagen.homewall.data.layout.knownHiddenLedsToMark
+import com.kreyenhagen.homewall.data.layout.knownHiddenLedsAvailable
 import com.kreyenhagen.homewall.data.layout.layoutOrNull
 import com.kreyenhagen.homewall.data.layout.ledRanges
+import com.kreyenhagen.homewall.data.layout.ledsIn
+import com.kreyenhagen.homewall.data.layout.offListProblem
+import com.kreyenhagen.homewall.data.layout.parseLedList
 import com.kreyenhagen.homewall.data.layout.startedMapping
 import com.kreyenhagen.homewall.data.layout.withHoldLeds
 import com.kreyenhagen.homewall.data.layout.withHoldMoved
@@ -24,7 +27,8 @@ import com.kreyenhagen.homewall.data.layout.withLedAddedToHold
 import com.kreyenhagen.homewall.data.layout.withLedCount
 import com.kreyenhagen.homewall.data.layout.withLedHidden
 import com.kreyenhagen.homewall.data.layout.withLedInNewHold
-import com.kreyenhagen.homewall.data.layout.withUnmappedLedsHidden
+import com.kreyenhagen.homewall.data.layout.withLedUnused
+import com.kreyenhagen.homewall.data.layout.withOffList
 import com.kreyenhagen.homewall.data.layout.withoutHold
 import com.kreyenhagen.homewall.data.photo.WallPhotoState
 import com.kreyenhagen.homewall.data.settings.AppSettings
@@ -75,6 +79,9 @@ data class MapLedsUiState(
     /** Where [suggestedLedCount] came from, e.g. "from the controller". */
     val suggestedLedCountSource: String = "",
     val current: Int = 0,
+    /** Where Prev and Next go: the nearest LEDs that aren't Hidden, or null at the ends. */
+    val previousLed: Int? = null,
+    val nextLed: Int? = null,
     /** e.g. "Not mapped yet", "Paired with LED 36", "Hidden". */
     val status: String = "",
     val summary: MappingSummary? = null,
@@ -87,17 +94,18 @@ data class MapLedsUiState(
     val tileAction: TileAction? = null,
     /** The tile [tileAction] is about. */
     val tile: Hold? = null,
-    /** How many known hidden LEDs (§12.1) are still unmapped, so they can be marked Hidden in one go. */
-    val knownHiddenToMark: Int = 0,
     val saving: Boolean = false,
     val message: UserMessage? = null,
     val undo: MappingUndo? = null,
 ) {
     val ledCount: Int get() = layout?.ledCount ?: 0
-    val canGoBack: Boolean get() = current > 0
-    val canGoForward: Boolean get() = current < ledCount - 1
+    val canGoBack: Boolean get() = previousLed != null
+    val canGoForward: Boolean get() = nextLed != null
     val menuTile: Hold? get() = tile.takeIf { tileAction is TileAction.Menu }
     val editingTile: Hold? get() = tile.takeIf { tileAction is TileAction.EditLeds }
+
+    /** The Hidden or Unused list as the editor shows it, e.g. "0–40, 45, 54". */
+    fun offListText(list: OffList): String = layout?.let { ledRanges(it.ledsIn(list)) }.orEmpty()
 }
 
 /**
@@ -144,6 +152,7 @@ class MapLedsViewModel(
             val assignment = layout.assignmentOf(current)
             val ringed = tile ?: (assignment as? LedAssignment.InHold)?.hold
             val lit = tile?.leds ?: listOf(current)
+            val hidden = layout.hiddenLeds.toHashSet()
             MapLedsUiState(
                 loaded = true,
                 layout = layout,
@@ -152,6 +161,8 @@ class MapLedsViewModel(
                 suggestedLedCount = suggested,
                 suggestedLedCountSource = source,
                 current = current,
+                previousLed = (current - 1 downTo 0).firstOrNull { it !in hidden },
+                nextLed = (current + 1 until layout.ledCount).firstOrNull { it !in hidden },
                 status = statusOf(assignment, current),
                 summary = MappingSummary.of(layout),
                 rings = ringed?.let { mapOf(it.id to Color.White) }.orEmpty(),
@@ -160,7 +171,6 @@ class MapLedsViewModel(
                 ledFrame = if (mapping) LedFrame(lit.sorted().map { LedEntry(it, Palette.SLOT_CURSOR) }) else null,
                 tileAction = action,
                 tile = tile,
-                knownHiddenToMark = if (mapping) saved.knownHiddenLedsToMark().size else 0,
                 saving = l.saving,
                 message = l.message,
                 undo = l.undo,
@@ -186,9 +196,14 @@ class MapLedsViewModel(
 
     // ---- Moving between LEDs ----
 
-    fun previous() = goTo(uiState.value.current - 1)
+    /** Prev and Next skip Hidden LEDs, which are locked (§12.1). */
+    fun previous() {
+        uiState.value.previousLed?.let(::goTo)
+    }
 
-    fun next() = goTo(uiState.value.current + 1)
+    fun next() {
+        uiState.value.nextLed?.let(::goTo)
+    }
 
     /** The jump-to field. Returns false (and says why) if [text] isn't an LED index. */
     fun jumpTo(text: String): Boolean {
@@ -224,6 +239,7 @@ class MapLedsViewModel(
         if (state.needsLedCount || state.tileAction != null) return
         if (point.x !in 0f..layout.wall.widthIn || point.y !in 0f..layout.wall.heightIn) return show("Tap on the wall.")
         val led = state.current
+        if (refuseIfHidden(layout, led)) return
         advanceFrom(led)
         save(undoLed = null, failedLed = led) { layoutRepo.update { it.withLedInNewHold(led, point.x, point.y) } }
     }
@@ -235,6 +251,7 @@ class MapLedsViewModel(
         if (state.needsLedCount || state.tileAction != null) return
         val hold = layout.holds.firstOrNull { it.id == holdId } ?: return
         val led = state.current
+        if (refuseIfHidden(layout, led)) return
         advanceFrom(led)
         if (led in hold.leds) return show("LED $led is already in that tile.")
         save(undoLed = led, failedLed = led, message = "LED $led paired with ${ledsText(hold.leds)}") {
@@ -251,29 +268,71 @@ class MapLedsViewModel(
         save(undoLed = null, failedLed = led) { layoutRepo.update { it.withLedHidden(led) } }
     }
 
-    /**
-     * Marks the known hidden LEDs (§12.1) that aren't mapped yet Hidden, for a layout started
-     * before the list existed. LEDs already in tiles are left alone.
-     */
-    fun markKnownHidden() {
+    /** Unused: the LED is on the wall but has no hold in front of it, so it stays off and can't be picked. */
+    fun markUnused() {
         val state = uiState.value
-        val layout = layoutRepo.state.value.layoutOrNull ?: return
+        val layout = state.layout ?: return
         if (state.needsLedCount) return
-        val leds = layout.knownHiddenLedsToMark()
-        if (leds.isEmpty()) return
-        val inTiles = layout.knownHiddenLedsInTiles()
-        val marked = if (leds.size == 1) "Marked LED ${leds.single()} Hidden" else "Marked ${leds.size} LEDs Hidden"
-        val leftAlone = when (inTiles.size) {
-            0 -> ""
-            1 -> ". LED ${inTiles.single()} is in a tile, so it wasn't changed."
-            else -> ". LEDs ${ledRanges(inTiles)} are in tiles, so they weren't changed."
+        val led = state.current
+        if (refuseIfHidden(layout, led)) return
+        advanceFrom(led)
+        save(undoLed = null, failedLed = led) { layoutRepo.update { it.withLedUnused(led) } }
+    }
+
+    /**
+     * Hidden LEDs are locked (§12.1): they can't be placed, paired or marked Unused until they're
+     * taken out of the Hidden list. Says so and returns true if [led] is Hidden.
+     */
+    private fun refuseIfHidden(layout: WallLayout, led: Int): Boolean {
+        if (led !in layout.hiddenLeds) return false
+        show(hiddenLockedText(led))
+        return true
+    }
+
+    // ---- Editing the Hidden and Unused lists (§12.1) ----
+
+    /** What's wrong with [text] as the new [list], shown under the field; null if it can be saved. */
+    fun offListProblem(list: OffList, text: String): String? {
+        val layout = layoutRepo.state.value.layoutOrNull ?: return null
+        return offListProblem(layout, list, text)
+    }
+
+    /**
+     * Replaces [list] with the LEDs in [text]. LEDs taken out of it become unmapped. Returns false
+     * (and says why) if it can't be saved, so the editor stays open.
+     */
+    fun saveOffList(list: OffList, text: String): Boolean {
+        val layout = layoutRepo.state.value.layoutOrNull ?: return false
+        if (layout.placeholder) return false
+        offListProblem(layout, list, text)?.let {
+            show(it)
+            return false
         }
-        save(undoLed = state.current, message = marked + leftAlone) { layoutRepo.update { it.withUnmappedLedsHidden(leds) } }
-        if (state.current in leds) {
-            // Don't sit on an LED that's now Hidden: carry on at the next one to map.
-            val after = layout.withUnmappedLedsHidden(leds)
-            local.update { it.copy(current = after.firstUnmappedLed(state.current) ?: after.firstUnmappedLed() ?: state.current) }
+        val leds = parseLedList(text) ?: return false
+        if (leds == layout.ledsIn(list)) return true
+        val current = uiState.value.current
+        save(undoLed = current, message = "${list.label} list saved: ${countText(leds.size)}") {
+            layoutRepo.update { it.withOffList(list, leds) }
         }
+        if (list == OffList.HIDDEN && current in leds) {
+            // Hidden LEDs are locked, so don't stay on one: move to the nearest LED that isn't.
+            val hidden = leds.toHashSet()
+            val nearest = (current + 1 until layout.ledCount).firstOrNull { it !in hidden }
+                ?: (current - 1 downTo 0).firstOrNull { it !in hidden }
+            if (nearest != null) local.update { it.copy(current = nearest) }
+        }
+        return true
+    }
+
+    /**
+     * [text] with the known hidden LEDs (§12.1) that the Hidden list can take added to it, or null
+     * if that adds nothing (or [text] can't be read).
+     */
+    fun withKnownHidden(text: String): String? {
+        val layout = layoutRepo.state.value.layoutOrNull ?: return null
+        val leds = parseLedList(text) ?: return null
+        val merged = (leds + layout.knownHiddenLedsAvailable()).distinct().sorted()
+        return if (merged.size == leds.size) null else ledRanges(merged)
     }
 
     // ---- Press and hold a tile (§12.1) ----
@@ -364,17 +423,17 @@ class MapLedsViewModel(
     }
 
     /**
-     * Moves on after an action to the next LED that isn't Hidden (§12.1), so LEDs behind the wall
-     * are skipped. Prev and Next still stop on every LED. At the end it stays and says so.
+     * Moves on after an action to the next LED that isn't Hidden or Unused (§12.1), so LEDs that
+     * stay off are skipped. Prev and Next still stop on every LED. At the end it stays and says so.
      */
     private fun advanceFrom(led: Int) {
         val layout = uiState.value.layout ?: return
-        val hidden = layout.hiddenLeds.toHashSet()
-        val next = (led + 1 until layout.ledCount).firstOrNull { it !in hidden }
+        val off = layout.hiddenLeds.toHashSet().apply { addAll(layout.unusedLeds) }
+        val next = (led + 1 until layout.ledCount).firstOrNull { it !in off }
         when {
             next != null -> local.update { if ((it.current ?: led) == led) it.copy(current = next) else it }
             led >= layout.ledCount - 1 -> show("That was the last LED (LED $led).")
-            else -> show("That was the last LED to map. The LEDs after LED $led are Hidden.")
+            else -> show("That was the last LED to map. The LEDs after LED $led are Hidden or Unused.")
         }
     }
 
@@ -435,6 +494,7 @@ class MapLedsViewModel(
         fun statusOf(assignment: LedAssignment, led: Int): String = when (assignment) {
             LedAssignment.Unmapped -> "Not mapped yet"
             LedAssignment.Hidden -> "Hidden"
+            LedAssignment.Unused -> "Unused"
             is LedAssignment.InHold -> {
                 val others = assignment.hold.leds - led
                 if (others.isEmpty()) "Placed" else "Paired with ${ledsText(others)}"
@@ -453,6 +513,21 @@ class MapLedsViewModel(
         fun tileLedsProblem(layout: WallLayout, holdId: Int, text: String): String? {
             val leds = parseLeds(text) ?: return "Enter LED numbers separated by commas, e.g. 37, 38."
             return layout.holdLedsProblem(holdId, leds)
+        }
+
+        fun offListProblem(layout: WallLayout, list: OffList, text: String): String? {
+            val leds = parseLedList(text) ?: return "Enter LED numbers separated by commas, and ranges like 0–40."
+            return layout.offListProblem(list, leds)
+        }
+
+        fun hiddenLockedText(led: Int): String =
+            "LED $led is on the Hidden list, so it can't be used. To use it, take it out with Edit Hidden list."
+
+        /** "no LEDs", "1 LED", "74 LEDs". */
+        fun countText(count: Int): String = when (count) {
+            0 -> "no LEDs"
+            1 -> "1 LED"
+            else -> "$count LEDs"
         }
     }
 }

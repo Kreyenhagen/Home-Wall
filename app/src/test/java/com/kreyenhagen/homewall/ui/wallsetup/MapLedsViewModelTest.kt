@@ -6,9 +6,11 @@ import com.kreyenhagen.homewall.data.layout.KNOWN_HIDDEN_LEDS
 import com.kreyenhagen.homewall.data.layout.LayoutJson
 import com.kreyenhagen.homewall.data.layout.LayoutRepository
 import com.kreyenhagen.homewall.data.layout.LayoutState
+import com.kreyenhagen.homewall.data.layout.OffList
 import com.kreyenhagen.homewall.data.layout.WallLayout
 import com.kreyenhagen.homewall.data.layout.firstUnmappedLed
 import com.kreyenhagen.homewall.data.layout.layoutOf
+import com.kreyenhagen.homewall.data.layout.ledRanges
 import com.kreyenhagen.homewall.data.photo.WallPhotoState
 import com.kreyenhagen.homewall.data.settings.AppSettings
 import com.kreyenhagen.homewall.led.ConnectionState
@@ -80,7 +82,6 @@ class MapLedsViewModelTest {
         assertFalse(saved.placeholder)
         assertEquals(550, saved.ledCount)
         assertEquals(KNOWN_HIDDEN_LEDS, saved.hiddenLeds)
-        assertEquals(0, vm.state.knownHiddenToMark)
         assertEquals(41, vm.state.current) // LEDs 0–40 are behind the wall
         assertEquals("Not mapped yet", vm.state.status)
         assertEquals(LedFrame(listOf(LedEntry(41, Palette.SLOT_CURSOR))), vm.state.ledFrame)
@@ -140,9 +141,10 @@ class MapLedsViewModelTest {
     }
 
     @Test
-    fun movingOnSkipsHiddenLedsButPrevAndNextDont() = runTest {
+    fun movingOnAndPrevAndNextSkipHiddenLeds() = runTest {
         val vm = mapper(layoutOf(ledCount = 10, hidden = listOf(1, 2, 5)))
         assertEquals(0, vm.state.current)
+        assertFalse(vm.state.canGoBack)
         vm.tapEmpty(WallPoint(10f, 5f))
         assertEquals(3, vm.state.current)
         vm.hide()
@@ -150,41 +152,113 @@ class MapLedsViewModelTest {
         vm.tapEmpty(WallPoint(20f, 5f))
         assertEquals(6, vm.state.current)
         vm.previous()
-        assertEquals(5, vm.state.current) // Hidden LEDs can still be reached and changed
-        assertEquals("Hidden", vm.state.status)
-        vm.tapEmpty(WallPoint(30f, 5f))
-        assertEquals(listOf(5), saved(5)?.leds)
-        assertEquals(listOf(1, 2, 3), saved.hiddenLeds)
+        assertEquals(4, vm.state.current) // past Hidden LED 5
+        vm.previous()
+        assertEquals(0, vm.state.current) // past Hidden LEDs 3, 2 and 1
+        vm.next()
+        assertEquals(4, vm.state.current)
     }
 
     @Test
-    fun movingOnFromTheLastLedThatIsntHidden() = runTest {
-        val vm = mapper(layoutOf(ledCount = 4, hidden = listOf(3)))
+    fun hiddenLedsCantBePlacedPairedOrMarkedUnused() = runTest {
+        val vm = mapper(layoutOf(Hold(0, 10f, 5f, listOf(0)), ledCount = 10, hidden = listOf(5)))
+        vm.jumpTo("5") // the jump field can still show a Hidden LED
+        assertEquals("Hidden", vm.state.status)
+        val locked = "LED 5 is on the Hidden list, so it can't be used. To use it, take it out with Edit Hidden list."
+
+        vm.tapEmpty(WallPoint(30f, 5f))
+        assertEquals(locked, vm.state.message?.text)
+        vm.tapHold(0)
+        assertEquals(locked, vm.state.message?.text)
+        vm.markUnused()
+        assertEquals(locked, vm.state.message?.text)
+
+        assertEquals(listOf(5), saved.hiddenLeds) // nothing changed
+        assertEquals(listOf(Hold(0, 10f, 5f, listOf(0))), saved.holds)
+        assertTrue(saved.unusedLeds.isEmpty())
+        assertEquals(5, vm.state.current)
+
+        // Taken out of the Hidden list, it can be placed again.
+        assertTrue(vm.saveOffList(OffList.HIDDEN, ""))
+        vm.tapEmpty(WallPoint(30f, 5f))
+        assertEquals(listOf(5), saved(5)?.leds)
+    }
+
+    @Test
+    fun savingTheHiddenListMovesOffACurrentLedThatsNowHidden() = runTest {
+        val vm = mapper(layoutOf(ledCount = 10))
+        vm.jumpTo("3")
+        assertTrue(vm.saveOffList(OffList.HIDDEN, "3, 4"))
+        assertEquals(5, vm.state.current)
+        vm.undo()
+        assertEquals(3, vm.state.current)
+    }
+
+    @Test
+    fun movingOnFromTheLastLedThatIsntHiddenOrUnused() = runTest {
+        val vm = mapper(layoutOf(ledCount = 5, hidden = listOf(3), unused = listOf(4)))
         vm.jumpTo("2")
         vm.hide()
-        assertEquals("That was the last LED to map. The LEDs after LED 2 are Hidden.", vm.state.message?.text)
+        assertEquals("That was the last LED to map. The LEDs after LED 2 are Hidden or Unused.", vm.state.message?.text)
         assertEquals(2, vm.state.current)
     }
 
-    @Test
-    fun theKnownHiddenLedsCanBeMarkedInALayoutStartedBeforeTheList() = runTest {
-        // LEDs 0 and 2 were mapped into tiles before the list existed; LED 45 is already Hidden.
-        val vm = mapper(layoutOf(Hold(0, 10f, 5f, listOf(0)), Hold(2, 20f, 5f, listOf(2, 41)), hidden = listOf(45)))
-        assertEquals(1, vm.state.current)
-        assertEquals(72, vm.state.knownHiddenToMark)
+    // ---- Unused, and editing the Hidden and Unused lists ----
 
-        vm.markKnownHidden()
-        assertEquals("Marked 72 LEDs Hidden. LEDs 0, 2 are in tiles, so they weren't changed.", vm.state.message?.text)
-        assertEquals(KNOWN_HIDDEN_LEDS - listOf(0, 2), saved.hiddenLeds)
-        assertEquals(listOf(0), saved(0)?.leds)
-        assertEquals(listOf(2, 41), saved(2)?.leds)
-        assertEquals(0, vm.state.knownHiddenToMark)
-        assertEquals(42, vm.state.current) // LED 1 is Hidden now, so mapping carries on at the next LED to map
+    @Test
+    fun unusedMarksAnLedWithNoHoldAndMovingOnSkipsIt() = runTest {
+        val vm = mapper(layoutOf(Hold(0, 10f, 5f, listOf(0)), ledCount = 10, unused = listOf(3)))
+        assertEquals(1, vm.state.current)
+        vm.markUnused()
+        assertEquals(listOf(1, 3), saved.unusedLeds)
+        assertEquals(2, vm.state.current)
+        vm.tapEmpty(WallPoint(20f, 5f))
+        assertEquals(4, vm.state.current) // LED 3 is Unused, so it's skipped
+        vm.previous()
+        assertEquals("Unused", vm.state.status)
+        assertEquals("10 LEDs · 2 holds (2 LEDs) · 0 hidden · 2 unused", vm.state.summary?.text)
+
+        vm.jumpTo("0")
+        vm.markUnused() // a tile that turned out to have no hold: its LED comes out of the tile
+        assertNull(saved(0))
+        assertEquals(listOf(0, 1, 3), saved.unusedLeds)
+    }
+
+    @Test
+    fun theHiddenListCanBeEdited() = runTest {
+        val vm = mapper(layoutOf(Hold(42, 10f, 5f, listOf(42)), hidden = KNOWN_HIDDEN_LEDS, unused = listOf(50)))
+        assertEquals(ledRanges(KNOWN_HIDDEN_LEDS), vm.state.offListText(OffList.HIDDEN))
+        assertEquals("50", vm.state.offListText(OffList.UNUSED))
+
+        assertEquals("Enter LED numbers separated by commas, and ranges like 0–40.", vm.offListProblem(OffList.HIDDEN, "0-"))
+        assertEquals("LED 42 is in a tile. To make it Hidden, go to LED 42 and tap Hidden.", vm.offListProblem(OffList.HIDDEN, "0–42"))
+        assertEquals("LED 50 is in the Unused list. Take it out of that list first.", vm.offListProblem(OffList.HIDDEN, "50"))
+        assertNull(vm.offListProblem(OffList.HIDDEN, "0–41, 45"))
+
+        assertFalse(vm.saveOffList(OffList.HIDDEN, "42")) // refused: the editor stays open and nothing changes
+        assertEquals(KNOWN_HIDDEN_LEDS, saved.hiddenLeds)
+
+        assertTrue(vm.saveOffList(OffList.HIDDEN, "0–41, 45"))
+        assertEquals((0..41).toList() + 45, saved.hiddenLeds)
+        assertEquals("Hidden list saved: 43 LEDs", vm.state.message?.text)
+        assertEquals(43, saved.firstUnmappedLed()) // the LEDs taken out are unmapped now
 
         vm.undo()
-        assertEquals(listOf(45), saved.hiddenLeds)
-        assertEquals(1, vm.state.current)
-        assertEquals(72, vm.state.knownHiddenToMark)
+        assertEquals(KNOWN_HIDDEN_LEDS, saved.hiddenLeds)
+
+        // The behind-the-wall list can be added back to whatever is in the field.
+        assertEquals(ledRanges(KNOWN_HIDDEN_LEDS + 41), vm.withKnownHidden("41"))
+        assertNull(vm.withKnownHidden(ledRanges(KNOWN_HIDDEN_LEDS))) // nothing to add
+        assertNull(vm.withKnownHidden("abc"))
+    }
+
+    @Test
+    fun theUnusedListCanBeEmptied() = runTest {
+        val vm = mapper(layoutOf(ledCount = 10, unused = listOf(2, 3)))
+        assertTrue(vm.saveOffList(OffList.UNUSED, " "))
+        assertEquals(emptyList<Int>(), saved.unusedLeds)
+        assertEquals("Unused list saved: no LEDs", vm.state.message?.text)
+        assertTrue(vm.saveOffList(OffList.UNUSED, "")) // unchanged: nothing to save, but the editor can close
     }
 
     @Test
@@ -326,7 +400,7 @@ class MapLedsViewModelTest {
         assertEquals(0, vm.state.editingTile?.id)
 
         assertEquals("LED 5 is already in another tile.", vm.tileLedsProblem("5"))
-        assertEquals("LED 3 is marked Hidden. To use it, go to LED 3 and tap this tile.", vm.tileLedsProblem("0, 3"))
+        assertEquals("LED 3 is on the Hidden list. To use it, take it out with Edit Hidden list first.", vm.tileLedsProblem("0, 3"))
         assertEquals("There's no LED 10. LEDs go from 0 to 9.", vm.tileLedsProblem("10"))
         assertEquals("A tile needs at least one LED. Use Delete tile to remove it.", vm.tileLedsProblem(" , "))
         assertEquals("Enter LED numbers separated by commas, e.g. 37, 38.", vm.tileLedsProblem("1-2"))

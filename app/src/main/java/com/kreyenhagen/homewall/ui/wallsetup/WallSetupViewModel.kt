@@ -33,6 +33,7 @@ enum class WallSetupStep(val title: String) {
     PHOTO("Photo"),
     ALIGN("Align"),
     MAP_LEDS("Map LEDs"),
+    RINGS("Rings"),
     REVIEW("Review"),
 }
 

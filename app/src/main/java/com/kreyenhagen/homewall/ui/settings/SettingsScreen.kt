@@ -112,7 +112,6 @@ fun SettingsScreen(onBack: () -> Unit, onOpenWallSetup: () -> Unit) {
         snackbarHostState = snackbar,
         onBack = onBack,
         onOpenWallSetup = onOpenWallSetup,
-        onShowHoldMarkers = vm::setShowHoldMarkers,
         onShowLedPreview = vm::setShowLedPreview,
         onRingSize = vm::setRingSize,
         onKeepScreenOn = vm::setKeepScreenOn,
@@ -161,7 +160,6 @@ fun SettingsContent(
     state: SettingsUiState?,
     onBack: () -> Unit,
     onOpenWallSetup: () -> Unit,
-    onShowHoldMarkers: (Boolean) -> Unit,
     onShowLedPreview: (Boolean) -> Unit,
     onRingSize: (Float) -> Unit,
     onKeepScreenOn: (Boolean) -> Unit,
@@ -193,8 +191,7 @@ fun SettingsContent(
                 }
 
                 item { SectionHeader("Display") }
-                item { SwitchRow("Show hold markers", "Debug tiles with hold ids", s.showHoldMarkers, onShowHoldMarkers) }
-                item { SwitchRow("Show LED preview", "Dots on the holds whose LEDs are lit", s.showLedPreview, onShowLedPreview) }
+                item { SwitchRow("Show LED preview", "In Map LEDs and Review: dots on the holds whose LEDs are lit", s.showLedPreview, onShowLedPreview) }
                 item {
                     SliderRow(
                         title = "Ring size",
@@ -392,7 +389,6 @@ private fun SettingsPreview() {
             ),
             onBack = {},
             onOpenWallSetup = {},
-            onShowHoldMarkers = {},
             onShowLedPreview = {},
             onRingSize = {},
             onKeepScreenOn = {},

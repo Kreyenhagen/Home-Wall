@@ -43,7 +43,7 @@ Accounts or cloud sync, climb logging or ratings, any Kilter database or Kilter-
 |---|---|
 | Wall | 8 ft (96 in) wide. Two flat, full-width panels: a **kicker** about 15 in tall at the bottom, and the **main panel** above it, overhanging at **30°**. |
 | Panel heights | Measured along each panel's surface (§5). Kicker: about 15 in. Main panel: about 99 in (9.5 ft along the surface, minus the kicker). Both are rough measurements, accurate to about ±3 in, and can be refined at any time (§6.1). |
-| LEDs | **550** WS2811 pixels, color order **RBG**, on one data line, driven by an **ESP32 Dev Module** running FastLED (§11.6). Some pixels sit behind the wall (wire-length constraints) and must always stay off; the list is in §12.1. Some holds are covered by more than one pixel. |
+| LEDs | **550** WS2811 pixels, color order **RGB**, on one data line, driven by an **ESP32 Dev Module** running FastLED (§11.6). Some pixels sit behind the wall (wire-length constraints) and must always stay off; the list is in §12.1. Some holds are covered by more than one pixel. |
 | Power & wiring | 24 V LEDs on an 8.33 A (200 W) supply. LED data line on ESP32 **GPIO 16**. All 550 LEDs have been tested and work with FastLED. |
 | LED index | 0-based position along the data line, starting at the pixel nearest the ESP32. The app always shows indices 0-based. |
 | Link | BLE. The app is the GATT client (central). The ESP32 is the GATT server (peripheral). |
@@ -125,7 +125,8 @@ The repo also holds the ESP32 sketch at `firmware/home_wall/home_wall.ino` (§11
 - **Panel**: one flat section of the wall, full width. Panels are stacked bottom to top: **Kicker**, then **Main**.
 - **LED**: one WS2811 pixel, identified by its index.
 - **Hold**: a selectable spot on the wall. It owns one or more LED indices and has one position. This is what I tap, what gets a ring, and what the debug "tiles" represent.
-- **Hidden LED**: an LED behind the wall or otherwise not under a hold. It is never lit.
+- **Hidden LED**: an LED behind the wall. It is never lit.
+- **Unused LED**: an LED on the wall with no hold in front of it. It is never lit and can't be picked for a route. When a hold goes up in front of it, it gets mapped like any other LED.
 - **Route**: a name, a grade, and a set of `holdId → role`.
 - **Role**: `START`, `MIDDLE`, `FINISH`.
 
@@ -171,7 +172,8 @@ Wall coordinates are **inches on the unfolded wall surface**. Picture the wall f
     { "id": 7,  "x": 12.0, "y": 22.0, "leds": [7, 8], "group": "main" },
     { "id": 40, "x": 8.0,  "y": 26.0, "leds": [40], "group": "aux-a", "ringIn": 2.5 }
   ],
-  "hiddenLeds": [1, 2, 3, 4, 5, 6]
+  "hiddenLeds": [1, 2, 3, 4, 5, 6],
+  "unusedLeds": [9, 10]
 }
 ```
 
@@ -183,10 +185,16 @@ Rules:
     - Then regenerate the straightened image (§7.1).
 - `id` is a stable Int. Routes reference holds by `id`. A new hold gets `id` = its lowest LED index if no existing hold already uses that id; otherwise it gets the lowest unused id ≥ `ledCount`. The fallback is needed because ids never change while LEDs can move between holds: e.g. hold 37 owns LEDs [37, 38], LED 37 is remapped to a new spot, and hold 37 keeps its id with only LED 38, so the new hold can't also be 37. **Never renumber existing ids.**
 - `leds`: one or more indices, each `< ledCount`. Each LED belongs to at most one hold.
-- `hiddenLeds`: LEDs that have been reviewed and intentionally stay off. An LED in neither a hold nor `hiddenLeds` is **unmapped**. It is also always off, and Wall Setup lists it as still to do.
+- `hiddenLeds`: LEDs behind the wall that have been reviewed and intentionally stay off.
+- `unusedLeds` (optional, default empty): LEDs on the wall with no hold in front of them. They also stay off. Each LED is in at most one of a hold, `hiddenLeds` and `unusedLeds`.
+- An LED in none of a hold, `hiddenLeds` or `unusedLeds` is **unmapped**. It is also always off, and Wall Setup lists it as still to do.
 - `group` (optional): a free-text label, for example the names of my grid patterns. It is only used to color debug markers.
-- `ringIn` (optional): a ring-radius override for this hold, in inches.
-- **Validate on load:** duplicate ids, an LED in two holds, an LED in both a hold and `hiddenLeds`, out-of-range indices, positions off the wall, non-positive panel sizes. Show a clear error listing every problem. Never crash.
+- `ringIn`, `ringYIn`, `ringAngle` (optional): this hold's own ring, set in Wall Setup → Rings (§12.4). All three are unset for a hold that uses the Ring size setting.
+    - `ringIn` is the ring's radius in inches. For an oval, it's half the width.
+    - `ringYIn` is half the height of an oval, in inches. Without it the ring is a circle.
+    - `ringAngle` is the oval's rotation in degrees, clockwise as seen on the wall. Without it the angle is 0.
+    - A circle is stored as just `ringIn`. Example: `{ "id": 52, "x": 30.0, "y": 60.0, "leds": [52], "ringIn": 4.0, "ringYIn": 2.0, "ringAngle": 30.0 }` is an oval 8 in wide and 4 in tall, turned 30°.
+- **Validate on load:** duplicate ids, an LED in two holds, an LED in more than one of a hold, `hiddenLeds` and `unusedLeds`, out-of-range indices, positions off the wall, non-positive panel sizes, non-positive ring sizes. Show a clear error listing every problem. Never crash.
 - **Storage:** `filesDir/wall_layout.json`. On first launch, copy `assets/wall_layout.json` if it exists. Otherwise generate the placeholder (§6.4). Write atomically: temp file, then rename.
 - The file is meant to be hand-editable. It's where I can keep my own lists of LED indices.
 
@@ -244,7 +252,6 @@ While the placeholder is active, Route List shows the banner *"Placeholder layou
 | Saved BLE device (address + name) | none |
 | LED brightness | 50% |
 | Ring size | 3.5 in |
-| Show hold markers (debug tiles) | **on** for now |
 | Show LED preview (debug) | on in debug builds |
 | Keep screen on | on |
 | Simulated LED controller | off |
@@ -274,11 +281,12 @@ A photo of this wall shows two differently skewed shapes: the vertical kicker an
 - **Transform:** `WallTransform` = zoom/pan ∘ fit (scale + offset, y flipped, like `ContentScale.Fit`). It is the only wall ↔ screen conversion at runtime. Unit-test that wall → screen → wall round-trips within 0.01 in.
 
 ### 7.3 Drawing
-- **Rings:** a stroked circle centered on the hold.
-    - Radius = `(hold.ringIn ?: settings.ringSize) × scale`, minimum 12 dp.
-    - 3 dp stroke in the role color, with a thin dark outer stroke so rings stand out on any photo. No fill.
-- **Hold markers (debug tiles, toggle):** a small translucent square at each hold labeled with its LED numbers (e.g. "37, 38" for a paired hold), colored by `group`. Hidden LEDs are not drawn. The fold line is drawn too. I'll turn these off once I trust the mapping.
-- **LED preview (debug, toggle):** small glowing dots at the holds whose LEDs are in the last frame actually sent to the controller. This lets me verify LED logic on the emulator against the rings.
+- **Rings:** a stroked circle or oval centered on the hold (§6.1).
+    - Half-width = `(hold.ringIn ?: settings.ringSize) × scale`. Half-height = `(hold.ringYIn ?: hold.ringIn ?: settings.ringSize) × scale`. Each is at least 12 dp.
+    - Rotated `hold.ringAngle` degrees clockwise.
+    - A 3 dp stroke in the role color, with no outline and no fill.
+- **Hold markers (tiles):** a small translucent square at each hold labeled with its LED numbers (e.g. "37, 38" for a paired hold), colored by `group`. Hidden and Unused LEDs are not drawn. The fold line is drawn too. Tiles are shown only in Wall Setup (the Align result, Map LEDs and Review). Route Display and Route Editor never show them: only the rings of the route's holds.
+- **LED preview (debug, toggle):** small glowing dots at the holds whose LEDs are in the last frame actually sent to the controller. This lets me verify LED logic on the emulator against the rings. Shown only in Wall Setup (Map LEDs and Review). Route Display and Route Editor never show it.
 
 ### 7.4 Hit testing
 On tap: convert the point to wall coordinates, then pick the nearest hold within the hit radius. The hit radius is about half the median nearest-neighbor hold spacing on screen, minimum 24 dp. If no hold is in range, call `onTapEmpty(wallPoint)`.
@@ -347,7 +355,7 @@ Filter and sort in Kotlin (there will be at most a few hundred routes), in one s
 ### 8.2 Route Display
 - `HorizontalPager` over the **same filtered and sorted list** as Route List, opened at the tapped route.
 - If the opened route isn't in the filtered list (e.g. I just saved a Project while projects are filtered out), insert it at its sorted position so it still shows.
-- Each page: `WallView` with rings in role colors around that route's holds. Below it: the route **name** (large) and **grade**, plus the position, e.g. "12 / 48".
+- Each page: `WallView` with rings in role colors around that route's holds, and no tiles (§7.3). Below it: the route **name** (large) and **grade**, plus the position, e.g. "12 / 48".
 - **Edit** button in the top app bar opens Route Editor for the current page's route. Back returns to Route List.
 - **LEDs in real time:** when `pagerState.currentPage` changes (it changes mid-swipe at the halfway point), call `LedSync.showRoute(...)` for that route. Fast swipes are handled by LedSync's conflation (§9.1), not by debouncing in the UI.
 - The pager list collects the repository flow, so edits and deletes show up immediately. When the list changes, keep the current route selected by id.
@@ -360,7 +368,7 @@ Filter and sort in Kotlin (there will be at most a few hundred routes), in one s
 - **Undo**, **Redo** (disabled when there's nothing to undo or redo), and **Save**.
 
 **Rules:**
-- All holds start inactive, with no rings.
+- All holds start inactive, with no rings. There are no tiles (§7.3): the wall shows only the photo and the rings of active holds.
 - Tapping an inactive hold activates it with the selected role, and it gets a ring in that role's color.
 - Tapping an active hold **deactivates** it, whatever role is selected. To change a hold's role: tap it off, pick the role, tap it on again.
 - **Max 2 Start and 2 Finish holds.** A tap that would exceed the limit changes nothing and shows a snackbar ("Max 2 start holds" or "Max 2 finish holds") with a light haptic. Middle holds are unlimited.
@@ -385,14 +393,14 @@ Same screen as Create, except:
 
 ### 8.5 Settings
 - **Wall Setup** (opens §8.6)
-- **Display:** Show hold markers, Show LED preview, Ring size slider, Keep screen on
+- **Display:** Show LED preview, Ring size slider, Keep screen on
 - **LEDs:** Brightness slider (resends the palette live), Simulated LED controller
 - **Bluetooth:** saved device, Forget device
 - **Data:** Export / Import backup (§13), Export / Import layout (JSON or CSV, §12.3)
 - **Diagnostics:** the last 200 BLE and LED log lines, including packet hex
 
 ### 8.6 Wall Setup
-Four steps, shown as tabs or a stepper: **Photo · Align · Map LEDs · Review.** Each step works on its own later. For example, I can retake the photo and re-align without remapping.
+Five steps, shown as tabs or a stepper: **Photo · Align · Map LEDs · Rings · Review.** Each step works on its own later. For example, I can retake the photo and re-align without remapping.
 
 1. **Photo**
     - "Take photo" uses the system camera via `ActivityResultContracts.TakePicture` and a `FileProvider`. **Don't declare the CAMERA permission**: if it's declared but not granted, the system camera intent fails.
@@ -409,7 +417,8 @@ Four steps, shown as tabs or a stepper: **Photo · Align · Map LEDs · Review.*
     - Show the wall width and each panel's height as editable numbers in inches, prefilled from the layout. Editing them follows the resize rule in §6.1.
     - Saving stores the points and runs the rectifier (§7.1). Then show the straightened result with the hold markers on it, so I can check the fit, with a button to go back and adjust.
 3. **Map LEDs** (§12.1)
-4. **Review** (§12.2)
+4. **Rings** (§12.4)
+5. **Review** (§12.2)
 
 ---
 
@@ -462,7 +471,7 @@ class LedSync(private val controller: LedController, scope: CoroutineScope) {
 | Route List | The last route. **Lights off** calls `lightsOff()`. |
 | Route Editor | The draft, live. |
 | Settings | The last route. |
-| Wall Setup | The current LED, the identified hold, or all holds (§12). |
+| Wall Setup | The current LED, the selected or identified hold, or all holds (§12). |
 
 Implement this with a `DriveLeds(...)` composable effect (e.g. `LifecycleResumeEffect`) that pushes only while the screen's nav back-stack entry is **RESUMED**, re-pushes whenever the frame changes, and pushes again when the screen resumes. **Don't clear the LEDs in `onDispose`.** During navigation transitions it can fire after the next screen has already set its frame.
 
@@ -478,7 +487,7 @@ Implement this with a `DriveLeds(...)` composable effect (e.g. `LifecycleResumeE
 | Setup "all holds" | 5 | n/a | 64, 64, 64 |
 
 - Keep the `HoldRole → (slot, ring color, LED RGB)` mapping in one file. Screen colors and LED colors are deliberately separate, because LEDs render colors differently from the screen.
-- LED colors are always plain R, G, B, in the app and in the protocol. The strand is wired RBG, and FastLED's `COLOR_ORDER` in the firmware handles that. The app never reorders channels.
+- LED colors are always plain R, G, B, in the app and in the protocol. The strand is wired RGB, and FastLED's `COLOR_ORDER` in the firmware handles that. The app never reorders channels.
 - **Brightness** is applied app-side: scale the palette RGB values before sending `SET_PALETTE`. Changing brightness resends the palette, and the firmware re-renders immediately.
 - Building a frame from a route is a pure function: for each route hold that exists in the layout, for each LED of that hold, add `LedEntry(led, role.slot)`. Unit-test it.
 
@@ -603,7 +612,7 @@ No firmware exists yet. Claude Code writes it in M4, before the app's Bluetooth 
 #define DATA_PIN            16      // GPIO connected to the LED data line
 #define LED_COUNT           550
 #define CHIPSET             WS2811
-#define COLOR_ORDER         RBG
+#define COLOR_ORDER         RGB
 #define DEVICE_NAME         "HomeWall"
 #define MAX_MILLIAMPS       7000    // power cap: ~85% of the 24 V, 8.33 A supply
 #define MA_PER_PIXEL_WHITE  15      // estimated draw of one 24 V pixel at full white
@@ -648,7 +657,7 @@ No firmware exists yet. Claude Code writes it in M4, before the app's Bluetooth 
 - Vector 1 then vector 2 must light LED 12 green; LEDs 40, 41 and 300 blue; and LED 415 purple.
 - Vector 3 must turn them all off.
 
-**Hardware is already verified:** every LED works with FastLED on GPIO 16 with RBG order. The firmware's job is only to add the Bluetooth and protocol layer on top of that.
+**Hardware is already verified:** every LED works with FastLED on GPIO 16 with RGB order. The firmware's job is only to add the Bluetooth and protocol layer on top of that.
 
 ---
 
@@ -668,26 +677,28 @@ A spreadsheet isn't the primary method because off-by-one errors in the wiring o
 - First, confirm the total LED count. Default 550, or the value from INFO if connected.
 - **Known hidden LEDs.** I've already found the LEDs behind the wall: **0–40, 45, 54, 59, 64, 69, 74, 79, 84–86, 93, 106, 113, 120, 127, 134, 141, 148, 155, 162, 169, 200, 231, 262, 293, 325, 356, 371, 388, 420, 452, 484, 485, 517** (75 LEDs).
     - Starting to map puts them in `hiddenLeds` (those below the LED count).
-    - After that they're ordinary Hidden LEDs, so any of them can be changed like any other LED: go to it and tap where it lights up, or tap a tile to pair it.
-    - If some of them are unmapped (e.g. a layout started before this list), Map LEDs shows a "Mark Hidden" button that marks them all in one tap, with Undo. LEDs on the list that are already in tiles are left alone, and the snackbar names them.
+    - After that they're ordinary Hidden LEDs. **Hidden LEDs are locked:** while an LED is on the Hidden list, tapping the wall or a tile, or Unused, does nothing but say so ("LED 45 is on the Hidden list, so it can't be used…"), and Change LED number(s) refuses it. To use one, take it out with Edit Hidden list (below).
+    - The Hidden list editor has an "Add your behind-the-wall list" button that puts them back in, except any that are in a tile or the Unused list.
 - Header: "LED 37 of 0–549" (LEDs are numbered from 0, so it shows the last index, not the count), with Prev/Next and a jump-to-index field. The step resumes at the first unmapped LED.
-- **Auto-advance** goes to the next LED that isn't Hidden, so LEDs behind the wall are skipped. Prev, Next and the jump field still stop on every LED.
+- **Auto-advance** goes to the next LED that isn't Hidden or Unused, so LEDs that stay off are skipped. Prev and Next skip Hidden LEDs but stop on Unused ones, so an Unused LED can be placed once a hold goes up in front of it. The jump field can go to any LED. Saving the Hidden list with the current LED in it moves to the nearest LED that isn't Hidden.
 - The wall lights **only the current LED** (slot 4), except while a tile is held (below).
 - Actions:
     - **Tap an empty spot** on the image: create a new hold there containing this LED, then auto-advance.
     - **Tap an existing hold:** add this LED to that hold (pairing), then auto-advance. Show a snackbar: "LED 37 paired with LED 36 · Undo".
     - **Hidden** button: add the LED to `hiddenLeds`, then auto-advance.
+    - **Unused** button: add the LED to `unusedLeds` (it's on the wall but has no hold), then auto-advance.
+- **Edit Hidden list / Edit Unused list:** edit the whole list as text, e.g. "0–40, 45, 54" (commas or spaces between numbers, a dash for a range). LEDs taken out become unmapped. An LED that's in a tile, or in the other list, is refused with a message; nothing is moved. Snackbar with Undo.
 - **Press and hold a tile** (a hold's marker). The wall lights that tile's LEDs (slot 4) instead of the current LED, with a light haptic.
     - **Drag** it to move the tile. It's saved when I lift my finger.
     - **Let go** without dragging to open a menu on the tile:
-        - **Change LED number(s):** edit the tile's LEDs as a comma-separated list. The tile keeps its id and position. An LED that's already in another tile, or Hidden, is refused with a message; nothing is moved or swapped. Snackbar with Undo.
+        - **Change LED number(s):** edit the tile's LEDs as a comma-separated list. The tile keeps its id and position. An LED that's already in another tile, or Hidden or Unused, is refused with a message; nothing is moved or swapped. Snackbar with Undo.
         - **Delete tile:** its LEDs become unmapped. Snackbar with Undo. The current LED doesn't change.
-- Redoing an already-mapped LED replaces its old assignment. Remove it from its previous hold, and delete that hold if it's left with no LEDs.
+- Redoing an already-mapped LED replaces its old assignment. Remove it from its previous hold, and delete that hold if it's left with no LEDs. (Hidden LEDs are the exception: they're locked, above.)
 - Zoom is available for precise taps. Existing holds are drawn as tiles labeled with their LED numbers (§7.3).
 - Every action saves immediately (atomic write).
 
 ### 12.2 Review step
-- Summary, e.g. "550 LEDs · 380 holds (402 LEDs) · 148 hidden · 0 unmapped". Tapping "unmapped" jumps to the first unmapped LED in Map LEDs.
+- Summary, e.g. "550 LEDs · 380 holds (402 LEDs) · 75 hidden · 73 unused · 0 unmapped" (the unused count is left out while there are none). Tapping "unmapped" jumps to the first unmapped LED in Map LEDs.
 - **Tap a hold:** its LEDs light up (slot 4). A sheet shows its id, LEDs and position, with actions: **Move** (drag the marker), **Remove LED from hold**, **Delete hold**.
 - **"Light all holds"** toggle: every hold's LEDs light in dim white (slot 5). This is the fastest way to spot mistakes on the real wall, and it exercises chunking.
 - **Export layout:** saves the JSON through the share sheet or file picker. Once I'm happy, I'll copy it into `app/src/main/assets/wall_layout.json` so a fresh install starts with it.
@@ -704,9 +715,33 @@ A spreadsheet isn't the primary method because off-by-one errors in the wiring o
   ```
     - `x_in` and `y_in` are inches on the unfolded wall (§5): x from the left edge, y up along the surface from the bottom of the kicker. A main-panel hold's y is 15 plus its distance up the main panel from the fold.
     - Blank x/y means the LED is hidden.
+    - Blank x/y with the `hold` key `unused` (any case) means the LED is Unused. That key is reserved, so a row with it and a position is an error.
     - Rows that share a `hold` key form one hold, positioned at the first such row's x/y. A blank key means the LED is its own hold.
     - LED indices missing from the file are unmapped. `ledCount` = highest `led` + 1, unless I change it.
     - For regular grids, x/y can come from sheet formulas. Measured positions are less exact than tap-mapping, so check them in Review and drag markers to fix them.
+    - The CSV has no ring sizes. They're kept in the JSON (§6.1).
+
+### 12.4 Rings step
+The tab between Map LEDs and Review. This is where each hold's ring gets its size, shape and place, to fit the real hold.
+- **A ring's center is its hold's position** (§6.1): the spot that was tapped when the LED was mapped, where the hold's tile sits in Map LEDs and Review. There's no separate ring position, so moving the ring here moves the tile, and moving the tile there moves the ring.
+- **Always open.** While LEDs are still unmapped, it shows a note with the count and a "Map them" button that goes to the first unmapped LED. On the placeholder layout, it asks me to map the LEDs first.
+- **What's on the wall view:**
+    - No tiles.
+    - Every hold's ring, in white. The selected hold's ring is in yellow.
+    - Zoom works as in §7.5.
+- **Selecting:**
+    - Tap a ring to select it. Its LEDs light up on the wall (slot 4).
+    - Tap empty space to clear the selection. The wall goes dark.
+- **Changing the selected ring**, either way:
+    - **Drag handles:** on the ring itself. The crosshair on the center moves the ring and its hold, kept on the wall. The white handle at the end of the width changes only the width. The white handle at the top of the height changes only the height. The yellow handle beyond the top rotates the ring. Each axis follows the ring's rotation.
+    - **Sliders:** Width and Height in inches (1–36, across the whole ring), and Rotation in degrees (0–359).
+    - Changes are saved when I lift my finger or let go of the slider. Selecting another ring saves an unfinished change.
+    - Sizes round to 0.1 in, angles to whole degrees.
+- **Buttons:**
+    - **Make circle:** sets the height to match the width, with no rotation.
+    - **Use default size:** goes back to Settings → Ring size.
+    - **Revert:** puts the ring back to how it was, and where it was, when I selected it.
+- The selected ring's center is shown as a position, e.g. "x 56.0, y 27.0 in (Main)".
 
 ---
 
@@ -726,6 +761,7 @@ Required unit tests:
 - **Sort and filter:** all four orders, projects last, range edges, the include-projects switch.
 - **Layout:** validation (including panels), CSV import, the placeholder generator, panel resizing (holds keep their relative positions; holds on higher panels shift), and new-hold id assignment when the lowest LED index is already taken (§6.1).
 - **Rectifier:** each panel's quad corners map exactly to its band's corners.
+- **Rings:** a circle is stored as just `ringIn`; sizes and angles stay in range and round; each handle changes only its own axis, rotating follows the finger, and the center handle moves the hold (kept on the wall) without changing its ring; the handles are drawn where dragging them expects; the Rings tab saves on release and supports Make circle, Use default size and Revert.
 - **WallTransform:** wall → screen → wall round trip, with and without zoom.
 - **LedSync:** a fast burst of frames sends only the latest after the in-flight one finishes; a new session resends; an identical frame isn't resent.
 
@@ -791,10 +827,13 @@ Keep a short manual test checklist for each milestone in `PROGRESS.md`.
 - The firmware keeps the last frame lit when the app disconnects.
 - In-app light-and-tap mapping is the primary way to build the layout. CSV and JSON are the alternatives.
 - In Map LEDs, pressing and holding a tile drags it; letting go opens a menu to change its LED numbers or delete it. Changing to an LED that is already placed or Hidden is refused.
-- The LEDs known to be behind the wall (§12.1) start Hidden when mapping starts, and auto-advance skips Hidden LEDs. They stay editable like any other LED.
+- The LEDs known to be behind the wall (§12.1) start Hidden when mapping starts, and auto-advance skips Hidden and Unused LEDs. Hidden LEDs are locked: they can't be placed, paired or marked Unused until they're taken out of the Hidden list. The Hidden and Unused lists can each be edited as text.
+- LEDs on the wall with no hold are **Unused**, a separate list from Hidden. Neither keeps a position; an Unused LED that gets a hold is mapped again by tapping where it lights up.
 - Manual DI and the platform BLE API. No Hilt and no BLE library.
 - The firmware is one self-contained Arduino sketch (`firmware/home_wall/home_wall.ino`) that I copy, paste and upload. Its only extra library is FastLED; BLE uses the library bundled with the ESP32 board package. It's written in its own milestone (M4).
 - The power cap is done in the firmware with a simple estimate, not FastLED's 5 V-based power model.
+- Each hold can have its own ring: an oval with its own width, height and rotation. It's set in Wall Setup → Rings with drag handles or sliders. A ring's center is its hold's position, so moving the ring in Rings moves the hold's tile, and the other way round. The Rings tab is always open, with a reminder while LEDs are still unmapped.
+- Route Display and Route Editor show no tiles and no LED preview dots, only the rings of the route's active holds. Tiles appear only in Wall Setup, so the "Show hold markers" setting was removed. Rings have no dark outline.
 
 ## 17. Open questions (ask me; don't guess)
 None right now. Add new ones here as they come up.

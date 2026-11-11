@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerInputChange
@@ -52,6 +53,7 @@ import com.kreyenhagen.homewall.data.layout.Hold
 import com.kreyenhagen.homewall.data.layout.PlaceholderLayout
 import com.kreyenhagen.homewall.data.layout.WallLayout
 import com.kreyenhagen.homewall.data.layout.ledsLabel
+import com.kreyenhagen.homewall.data.layout.ringShape
 import com.kreyenhagen.homewall.domain.HoldRole
 import com.kreyenhagen.homewall.led.ringColor
 import com.kreyenhagen.homewall.ui.components.TabletPreviews
@@ -87,6 +89,8 @@ fun WallView(
     onDrag: ((dxIn: Float, dyIn: Float) -> Unit)? = null,
     /** Press and hold a tile to drag it, or hold and let go (Map LEDs, §12.1). */
     holdPress: HoldPressActions? = null,
+    /** Draws handles on one hold's ring and lets them be dragged (Wall Setup → Rings, §12.4). */
+    ringHandles: RingHandleActions? = null,
     popupHoldId: Int? = null,
     popup: @Composable () -> Unit = {},
     onTapHold: ((holdId: Int) -> Unit)? = null,
@@ -125,6 +129,9 @@ fun WallView(
     val currentOnDrag by rememberUpdatedState(onDrag)
     val currentMaxHitRadius by rememberUpdatedState(maxHitRadiusIn)
     val currentHoldPress by rememberUpdatedState(holdPress)
+    val currentRingHandles by rememberUpdatedState(ringHandles)
+    val currentHoldsById by rememberUpdatedState(holdsById)
+    val currentRingSize by rememberUpdatedState(ringSizeIn)
     val haptics = LocalHapticFeedback.current
     val zoomedIn = zoomPan.zoom > 1f
 
@@ -197,6 +204,32 @@ fun WallView(
                         currentOnDrag?.invoke(to.x - from.x, to.y - from.y)
                     }
                 }
+                // Sees each event before the tap detector; a press on a handle is consumed, so it never
+                // selects a hold. Before the zoom handler, so a second finger still starts a pinch.
+                .pointerInput(ringHandles != null) {
+                    if (ringHandles == null) return@pointerInput
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val actions = currentRingHandles ?: return@awaitEachGesture
+                        val hold = currentHoldsById[actions.holdId] ?: return@awaitEachGesture
+                        val t = currentTransform ?: return@awaitEachGesture
+                        val touch = HANDLE_TOUCH_RADIUS.toPx()
+                        val (handle, spot) = ringHandleSpots(hold, currentRingSize, t).entries
+                            .filter { (it.value - down.position).getDistance() <= touch }
+                            .minByOrNull { (it.value - down.position).getDistance() }
+                            ?.toPair()
+                            ?: return@awaitEachGesture
+                        down.consume()
+                        // Keep the handle where it was grabbed relative to the finger, so it doesn't jump.
+                        val grab = spot - down.position
+                        try {
+                            trackRingHandle(down, handle, grab, actions) { currentTransform }
+                        } catch (e: CancellationException) {
+                            actions.onCancel()
+                            throw e
+                        }
+                    }
+                }
                 .pointerInput(zoomEnabled) {
                     if (!zoomEnabled) return@pointerInput
                     awaitEachGesture {
@@ -237,6 +270,7 @@ fun WallView(
             if (image == null || showMarkers) drawFolds(layout, t, strong = showMarkers)
             if (showMarkers) drawMarkers(layout.holds, labels, t)
             drawRings(rings, holdsById, ringSizeIn, t)
+            ringHandles?.let { h -> holdsById[h.holdId]?.let { drawRingHandles(it, ringSizeIn, t) } }
             drawLedPreview(ledPreview, holdsById, t)
         }
 
@@ -328,6 +362,46 @@ private suspend fun AwaitPointerEventScope.trackHeldTile(
     }
 }
 
+/** Drag a ring handle until the finger lifts. Every event is consumed. */
+private suspend fun AwaitPointerEventScope.trackRingHandle(
+    down: PointerInputChange,
+    handle: RingHandle,
+    grab: Offset,
+    actions: RingHandleActions,
+    transform: () -> WallTransform?,
+) {
+    while (true) {
+        val event = awaitPointerEvent()
+        val change = event.changes.firstOrNull { it.id == down.id }
+        if (change == null || change.isConsumed || event.changes.count { it.pressed } > 1) {
+            actions.onCancel()
+            return
+        }
+        if (!change.pressed) {
+            change.consume()
+            actions.onDragEnd()
+            return
+        }
+        if (change.position != change.previousPosition) {
+            transform()?.let { actions.onDrag(handle, it.screenToWall(change.position + grab)) }
+        }
+        change.consume()
+    }
+}
+
+/** Where the selected ring's handles are on screen, matching how [drawRings] draws the ring. */
+private fun Density.ringHandleSpots(hold: Hold, ringSizeIn: Float, t: WallTransform): Map<RingHandle, Offset> {
+    val shape = hold.ringShape(ringSizeIn)
+    val minRadius = MIN_RING_RADIUS.toPx()
+    return RingGeometry.handlePositions(
+        center = t.wallToScreen(hold.x, hold.y),
+        rxPx = max(shape.radiusXIn * t.scale, minRadius),
+        ryPx = max(shape.radiusYIn * t.scale, minRadius),
+        angleDeg = shape.angleDeg,
+        rotateGapPx = ROTATE_HANDLE_GAP.toPx(),
+    )
+}
+
 /** Zoom and pan, kept in one stable object so gesture handlers always write to the current state. */
 @Stable
 private class ZoomPan {
@@ -344,6 +418,9 @@ object WallColors {
     /** Stand-in for the wall when there's no photo. */
     val PlainWall = Color(0xFF4A443D)
 
+    /** The rotate handle on a selected ring (Wall Setup → Rings). The size handles are white. */
+    val RotateHandle = Color(0xFFFFC400)
+
     /** Debug-marker color for a hold's [group]: stable per name, neutral without one. */
     fun groupColor(group: String?): Color {
         if (group.isNullOrBlank()) return Color(0xFFB0BEC5)
@@ -354,6 +431,10 @@ object WallColors {
 
 private val MIN_HIT_RADIUS = 24.dp
 private val MIN_RING_RADIUS = 12.dp
+private val HANDLE_RADIUS = 8.dp
+private val HANDLE_TOUCH_RADIUS = 24.dp
+private val ROTATE_HANDLE_GAP = 40.dp
+private val CENTER_HANDLE_ARM = 10.dp
 private val RING_STROKE = 3.dp
 private val MARKER_SIZE = 22.dp
 private val LED_GLOW_RADIUS = 9.dp
@@ -392,15 +473,50 @@ private fun DrawScope.drawMarkers(holds: List<Hold>, labels: Map<Int, TextLayout
 private fun DrawScope.drawRings(rings: Map<Int, Color>, holdsById: Map<Int, Hold>, ringSizeIn: Float, t: WallTransform) {
     if (rings.isEmpty()) return
     val stroke = Stroke(RING_STROKE.toPx())
-    val outerStroke = Stroke(1.5.dp.toPx())
-    val outerGap = RING_STROKE.toPx() / 2f + 1.dp.toPx()
+    val minRadius = MIN_RING_RADIUS.toPx()
     for ((holdId, color) in rings) {
         val hold = holdsById[holdId] ?: continue
         val center = t.wallToScreen(hold.x, hold.y)
-        val radius = max((hold.ringIn ?: ringSizeIn) * t.scale, MIN_RING_RADIUS.toPx())
-        // A thin dark outline outside the colored ring keeps it visible on any photo (§7.3).
-        drawCircle(Color.Black.copy(alpha = 0.75f), radius + outerGap, center, style = outerStroke)
-        drawCircle(color, radius, center, style = stroke)
+        val shape = hold.ringShape(ringSizeIn)
+        val rx = max(shape.radiusXIn * t.scale, minRadius)
+        val ry = max(shape.radiusYIn * t.scale, minRadius)
+        // Just the colored stroke, with no dark outline (§7.3).
+        if (abs(rx - ry) < 0.5f) {
+            drawCircle(color, rx, center, style = stroke)
+        } else {
+            rotate(shape.angleDeg, pivot = center) {
+                drawOval(color, Offset(center.x - rx, center.y - ry), Size(2 * rx, 2 * ry), style = stroke)
+            }
+        }
+    }
+}
+
+/**
+ * The selected ring's handles (Wall Setup → Rings): a crosshair on the center to move it, white
+ * dots for width and height, and a yellow dot to rotate.
+ */
+private fun DrawScope.drawRingHandles(hold: Hold, ringSizeIn: Float, t: WallTransform) {
+    val spots = ringHandleSpots(hold, ringSizeIn, t)
+    val dark = Color.Black.copy(alpha = 0.8f)
+    val height = spots.getValue(RingHandle.HEIGHT)
+    val rotate = spots.getValue(RingHandle.ROTATE)
+    drawLine(dark, height, rotate, strokeWidth = 3.5.dp.toPx())
+    drawLine(Color.White, height, rotate, strokeWidth = 1.5.dp.toPx())
+
+    val center = spots.getValue(RingHandle.CENTER)
+    val arm = CENTER_HANDLE_ARM.toPx()
+    for ((width, color) in listOf(4.dp.toPx() to dark, 2.dp.toPx() to Color.White)) {
+        drawLine(color, center - Offset(arm, 0f), center + Offset(arm, 0f), strokeWidth = width)
+        drawLine(color, center - Offset(0f, arm), center + Offset(0f, arm), strokeWidth = width)
+    }
+    drawCircle(dark, 4.5.dp.toPx(), center)
+    drawCircle(Color.White, 3.dp.toPx(), center)
+
+    val radius = HANDLE_RADIUS.toPx()
+    for ((handle, spot) in spots) {
+        if (handle == RingHandle.CENTER) continue
+        drawCircle(dark, radius + 1.5.dp.toPx(), spot)
+        drawCircle(if (handle == RingHandle.ROTATE) WallColors.RotateHandle else Color.White, radius, spot)
     }
 }
 

@@ -83,9 +83,10 @@ M3 notes (consistent with the doc, listed so they are not a surprise):
   changes?" when editing. Cancelling the Save dialog keeps what was typed for next time.
 
 M4 notes:
-- **Color order (deferred; you'll adjust it later).** The firmware uses `COLOR_ORDER RBG`, as §2 and §11.6 say.
-  Your test sketch `Documents/Arduino/sketch_jun18a` uses `RGB`. The nRF Connect route test below
-  shows which is right (LED 12 must be green). If it is RGB, change the `COLOR_ORDER` line in the sketch and §2/§11.6 together.
+- **Color order: settled as RGB** (after M7). The firmware first used `COLOR_ORDER RBG`, from the
+  first version of §2. You found the strand is actually RGB (green and blue came out swapped), so
+  the sketch and §2/§9.3/§11.6 now say `RGB`. Your test sketch `Documents/Arduino/sketch_jun18a`
+  used `RGB` too.
 - The `#include`s sit just above the settings block instead of below it. FastLED uses `DATA_PIN`
   as a name inside its own headers, so defining it first breaks the build (FastLED's own examples
   put their defines after the include too). The settings block itself is exactly as in §11.6.
@@ -231,19 +232,81 @@ After M7: fixes and changes from testing on the tablet.
 - **Known hidden LEDs** (you asked for this; §2, §12.1 and §16 updated). Your list of the 75 LEDs
   behind the wall is built into the app (`data/layout/KnownHiddenLeds.kt`).
   - **Start mapping** marks them Hidden.
-  - A layout that was started before the list (like the one on your tablet) gets a **Mark Hidden**
-    button in Map LEDs. It marks every listed LED that isn't mapped yet, with Undo. Listed LEDs
-    that are already in tiles are left alone, and the snackbar names them.
-  - After a tap or Hidden, Map LEDs moves on to the next LED that **isn't Hidden**, so it skips
-    them. Prev, Next and the jump field still stop on every LED, so any of them can be changed:
-    go to it and tap where it lights up, or tap a tile to pair it.
-  - Change LED number(s) still refuses a Hidden LED, and its message now says how to use one.
+  - The **Mark Hidden** card for layouts started before the list was replaced by the Hidden list
+    editor (below), which has an "Add your behind-the-wall list" button instead. The card would
+    have kept coming back after you took an LED out of the list on purpose.
+  - After a tap or Hidden, Map LEDs moves on to the next LED that **isn't Hidden or Unused**, so
+    it skips them.
+  - **Hidden LEDs are locked** (you asked for this). While an LED is on the Hidden list, tapping
+    the wall or a tile, or Unused, only shows "LED 45 is on the Hidden list, so it can't be
+    used…". Prev and Next skip Hidden LEDs (the jump field can still show one). To use one, take
+    it out with Edit Hidden list. Saving the Hidden list with the current LED in it moves on to
+    the nearest LED that isn't Hidden.
+  - Unused LEDs aren't locked: Prev and Next still stop on them, so one can be placed when a hold
+    goes up in front of it.
+  - Change LED number(s) still refuses a Hidden (or Unused) LED, and its message says how to use one.
+- **Unused LEDs** (you asked for this; §5, §6.1, §7.3, §12.1–12.3 and §16 updated). An **Unused**
+  button next to Hidden marks an LED that's on the wall but has no hold in front of it. Like
+  Hidden, it's never lit, can't be picked for a route, and is skipped when mapping moves on. Only
+  tiles can ever light or be picked, so an LED you skip is already off; Unused records that you've
+  dealt with it, so it stops counting as unmapped. Unused LEDs don't keep a position: when a hold
+  goes up in front of one, go to it and tap where it lights up.
+  - **Deviation to note:** `wall_layout.json` has a new optional `unusedLeds` list. Files without
+    it still load, so `schemaVersion` stays 1. CSV marks them with the hold key `unused` (§12.3).
+- **Edit Hidden list / Edit Unused list** (you asked for this). Under the summary in Map LEDs.
+  Each opens the whole list as text with ranges, e.g. "0–40, 45, 54", for you to edit. LEDs you
+  take out become unmapped. An LED that's in a tile, or in the other list, is refused and the
+  field says how to change it. Save shows a snackbar with Undo.
 - **Map LEDs' Undo snackbar goes away after 2 seconds.** Material keeps a snackbar with an action
   up until it's tapped, so Undo used to stay up. Accessibility settings that ask for longer
   timeouts still get them.
+- **Firmware color order is RGB, not RBG** (you found the strand is RGB; §2, §9.3, §11.6 updated).
+  With RBG, the green and blue channels were swapped: Start showed blue, Middle green, and Finish
+  yellow-green. Only `#define COLOR_ORDER` in the sketch changed. The app and the protocol already
+  send plain R, G, B, so there's no protocol version bump. **Upload the sketch to the ESP32 again.**
 - **Map LEDs' header shows the LED range**: "LED 37 of 0–549" instead of "LED 37 of 550" (§12.1
   updated). LEDs are numbered from 0, so the last one is 549; there are still 550. The LED count
   fields say "They're numbered 0–549" too.
+- **Rings tab** (you asked for this; §6.1, §7.3, §8.6, §9.2, §12.4, §14 and §16 updated). A new
+  Wall Setup tab between Map LEDs and Review.
+  - It shows every hold's ring, with no tiles. Tap one to select it: it turns yellow and its LEDs
+    light up on the wall.
+  - Change the selected ring with the **drag handles** on it (white for width and height, yellow
+    to rotate) or with the **Width, Height and Rotation sliders**. Width and height are each
+    1–36 in across the ring.
+  - **Move a ring** (you asked for this) by dragging the crosshair on its center. The center *is*
+    the hold's position, the same point as its tile in Map LEDs and Review. So moving the ring
+    moves the tile, and moving the tile moves the ring. There's no separate ring position to keep
+    in sync. The selected ring's center is shown, e.g. "Center: x 56.0, y 27.0 in (Main)".
+    Moving a ring doesn't give it its own size.
+  - Each change is saved when you lift your finger.
+  - Buttons: **Make circle**, **Use default size** (back to Settings → Ring size) and **Revert**
+    (back to how the ring was, and where it was, when you selected it).
+  - The tab is always open (your choice). While LEDs are still unmapped, it shows the count and
+    a **Map them** button.
+  - The ovals show on every screen with rings: Route Display, the editor, and Review.
+  - **Deviation to note:** holds in `wall_layout.json` have two new optional fields: `ringYIn`
+    (half the height) and `ringAngle` (degrees clockwise). `ringIn` is still the radius, or half
+    the width for an oval. Old files still load, so `schemaVersion` stays 1. A circle is still
+    saved as just `ringIn`.
+  - The CSV export doesn't include ring sizes; they're only in the JSON.
+  - Changing the wall size in Align moves the holds but doesn't resize their rings. Panel sizes
+    change by a few inches at most, so this only shifts a ring's size by a few percent.
+- **No tiles on Route Display or the Route Editor** (you asked for this; §6.5, §7.3, §8.2, §8.3,
+  §8.5 and §16 updated). Those screens show only the photo and the rings of the route's active
+  holds. Tapping in the editor still picks the nearest hold, as before.
+  - Tiles now appear only in Wall Setup: the Align result, Map LEDs and Review. Rings has none.
+  - **Settings → Show hold markers was removed.** It only ever affected these two screens, so it
+    would no longer do anything.
+  - **No LED preview dots there either** (you asked for this). The glowing dots that mark lit
+    holds are gone from Route Display and the Route Editor. They still show in Map LEDs and
+    Review while Settings → Show LED preview is on, and the setting's description now says so.
+    This means M5's check "the LED preview matches the rings while I swipe fast" can't be done on
+    Route Display any more. Watch the real wall instead, or check the Simulated packets in
+    Settings → Diagnostics.
+- **Rings have no dark outline** (you asked for this; §7.3 and §16 updated). Each ring is just
+  the 3 dp colored stroke, on every screen. On a dark or busy part of the photo a ring may be
+  harder to see than before.
 
 ## To do by hand
 
@@ -339,7 +402,7 @@ To write a value: tap the up-arrow on the characteristic, choose **BYTE ARRAY**,
 - [ ] **INFO:** open the service `5B1E0001-…` and read characteristic `…0003` (down-arrow). It shows `0x01-26-02-10`: protocol 1, 550 LEDs, 16 palette slots.
 - [ ] **Palette (vector 1):** write `01000100FF00020000FF039600FF04FFFFFF` to `…0002`. The log says "SET_PALETTE seq=0 slots=4" and the wall doesn't change.
 - [ ] **Route frame (vector 2):** write `0207030C00012800022900022C01029F0103`. The log says "FRAME seq=7 flags=03 entries=5". The wall shows LED 12 **green**, LEDs 40, 41 and 300 **blue**, and LED 415 **purple**. (LED 40 is on your test sketch's hidden list, so it may be behind the wall.)
-  - **Color order check:** if LED 12 is blue and 41/300 are green, the strand isn't RBG. Tell me, and I'll change `COLOR_ORDER` in both the sketch and the doc.
+  - **Color order check:** if LED 12 is blue and 41/300 are green, `COLOR_ORDER` doesn't match the strand. It's `RGB` now (changed after M7).
 - [ ] **Live palette:** write `010901FF0000` (slot 1 → red). LED 12 turns red straight away with no new frame, because a palette change re-renders the current frame.
 - [ ] **All off (vector 3):** write `020803`. Every LED goes off.
 - [ ] **Multi-packet frame:** write `020A01640004` (BEGIN, LED 100 white). Nothing changes yet, because it isn't committed. Then write `020B02650004` (COMMIT, LED 101 white). LEDs 100 and 101 light white together.
@@ -435,7 +498,22 @@ Note: with the placeholder layout, hold *n* is LED *n*, so the LEDs that light a
 - [ ] Press and hold a tile: a buzz, and the wall lights that tile's LEDs. Drag it: it follows your finger and stays where you drop it (also after leaving and reopening Wall Setup). Dragging past the wall's edge stops at the edge.
 - [ ] Hold a tile and let go: a menu shows its LEDs, **Change LED number** and **Delete tile**. Tap outside it: it closes, and the wall goes back to the current LED.
 - [ ] **Change LED number** to a free LED: the tile keeps its spot with the new number, and Undo puts it back. Try an LED that's in another tile, or a Hidden one: the field says why and Save is disabled.
-- [ ] **Delete tile**: it's gone, its LEDs count as unmapped, the current LED stays the same, and Undo brings it back. Delete another and leave it: the Undo snackbar goes away after about 2 seconds (same for pairing, Change LED number and Mark Hidden).
+- [ ] **Delete tile**: it's gone, its LEDs count as unmapped, the current LED stays the same, and Undo brings it back. Delete another and leave it: the Undo snackbar goes away after about 2 seconds (same for pairing, Change LED number and saving a list).
 - [ ] A quick tap still maps or pairs as before, and pinch-zoom still works, including starting a pinch with one finger on a tile.
-- [ ] Known hidden LEDs, on the layout already on the tablet: Map LEDs shows "N LEDs on your behind-the-wall list aren't marked Hidden yet". Tap **Mark Hidden**: the summary's hidden count goes up, the card goes away, and if any listed LED was in a tile, the snackbar names it. Undo puts it back.
-- [ ] Map an LED just before a hidden one (e.g. LED 44): it moves on to 46, not 45. **Prev** still stops on 45 and shows "Hidden". Tap where 45 lights up: it becomes a tile.
+- [ ] Map an LED just before a hidden one (e.g. LED 44): it moves on to 46, not 45. **Prev** from 46 goes to 44, skipping 45.
+- [ ] Jump to a Hidden LED (e.g. 45): the status says "Hidden". Tap the wall, tap a tile, and tap **Unused**: each only shows "LED 45 is on the Hidden list, so it can't be used…" and nothing changes. Take 45 out with **Edit Hidden list**: now a tap places it.
+- [ ] **Edit Hidden list**: it shows "0–40, 45, 54, …". Take one out and Save: the hidden count drops by one and Undo puts it back. Type an LED that's in a tile: the field says why and Save is disabled. Clear the field, tap **Add your behind-the-wall list**, and the list comes back.
+- [ ] On an LED with no hold, tap **Unused**: it moves on, the status of that LED says "Unused", and the summary shows "· 1 unused". Mapping moves past Unused LEDs like Hidden ones.
+- [ ] **Edit Unused list**: shows the Unused LEDs. Add one or take one out and Save. An LED that's Hidden is refused.
+- [ ] Route Editor: Unused and Hidden LEDs have no tile and can't be picked; only tiles can.
+- [ ] Settings → Export layout as JSON and as CSV, then import each: the Unused LEDs come back.
+- [ ] After uploading the RGB sketch: open a route. Start holds are **green**, middle holds **blue**, finish holds **purple**, and the Map LEDs cursor is white.
+- [ ] Wall Setup has five tabs: Photo, Align, Map LEDs, **Rings**, Review. Rings shows a white ring on every hold and no tiles. With LEDs still unmapped, it shows the count, and **Map them** goes to the first unmapped LED.
+- [ ] Tap a ring: it turns yellow, the wall lights that hold's LEDs, and handles appear. Drag the right-hand white handle: only the width changes. Drag the top white handle: only the height changes. Drag the yellow handle around: the ring rotates with it. Tap empty space: the selection clears and the wall goes dark.
+- [ ] Move the **Width**, **Height** and **Rotation** sliders: the ring follows. Leave and reopen Wall Setup: the new shape is still there.
+- [ ] Rotate a ring, then drag its width handle: the width still follows the ring's own axis.
+- [ ] Start a handle drag, then put down a second finger: it zooms instead, and the ring goes back to how it was.
+- [ ] Drag the crosshair in the middle of a selected ring: the ring follows your finger, and its LEDs stay lit. Let go, open **Map LEDs** or **Review**: that hold's tile is at the ring's new center. Move the tile there, come back to Rings: the ring is centered on the tile's new spot. Dragging a ring past the wall's edge stops at the edge.
+- [ ] **Make circle**, **Use default size** and **Revert** each do what they say. Revert after moving a ring puts it back where it was.
+- [ ] Make a route that uses an oval hold: Route Display and the editor show the oval. Export the layout as JSON and import it: the oval comes back.
+- [ ] Route Display and Create/Edit route show no tiles and no glowing LED preview dots, even with Show LED preview on: just the photo, with rings only on the route's active holds. Each ring is a plain colored line with no dark outline (the Rings tab and Review too). Tapping a hold on the photo in the editor still adds it. Settings → Display no longer has "Show hold markers". Wall Setup's Map LEDs and Review still show tiles.
